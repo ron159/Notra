@@ -315,6 +315,7 @@ interface SessionSnapshot {
   searchMode: SearchMode;
   wordWrap: boolean;
   minimap: boolean;
+  smoothCaretAnimation: boolean;
   renderWhitespace: RenderWhitespaceMode;
   fontSize: number;
   shellFontMode: FontMode;
@@ -780,6 +781,7 @@ const state = {
   findView: "find" as FindView,
   wordWrap: false,
   minimap: false,
+  smoothCaretAnimation: false,
   renderWhitespace: "selection" as RenderWhitespaceMode,
   fontSize: DEFAULT_EDITOR_FONT_SIZE,
   shellFontMode: "preset" as FontMode,
@@ -1187,7 +1189,7 @@ function bootstrap() {
     minimap: { enabled: state.minimap },
     scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
     smoothScrolling: true,
-    cursorSmoothCaretAnimation: "on",
+    cursorSmoothCaretAnimation: state.smoothCaretAnimation ? "on" : "off",
     cursorBlinking: "smooth",
     bracketPairColorization: { enabled: true },
     guides: {
@@ -1863,6 +1865,7 @@ function bindActions() {
   bindCustomFontInput("settingsEditorFontCustom", "editor");
   bindSegmentedSetting("settingsWordWrapControl", (value) => setWordWrap(value === "on"));
   bindSegmentedSetting("settingsMinimapControl", (value) => setMinimap(value === "on"));
+  bindSegmentedSetting("settingsCaretAnimationControl", (value) => setSmoothCaretAnimation(value === "on"));
   bindSegmentedSetting("settingsWhitespaceControl", (value) => setWhitespace(value as RenderWhitespaceMode));
   bindSegmentedSetting("settingsKeymapProfileControl", (value) => setKeymapProfile(value));
   bindSegmentedSetting("settingsMarkdownWidthControl", (value) => setMarkdownContentWidth(value));
@@ -2791,6 +2794,15 @@ function setMinimap(enabled: boolean) {
   renderSettingsMenu();
   scheduleSessionSave();
   log(`缩略图 ${state.minimap ? "已开启" : "已关闭"}`);
+}
+
+function setSmoothCaretAnimation(enabled: boolean) {
+  if (state.smoothCaretAnimation === enabled) return;
+  state.smoothCaretAnimation = enabled;
+  applyEditorSettings();
+  renderSettingsMenu();
+  scheduleSessionSave();
+  log(`光标平滑移动 ${state.smoothCaretAnimation ? "已开启" : "已关闭"}`);
 }
 
 function setWhitespace(value: RenderWhitespaceMode) {
@@ -5255,6 +5267,7 @@ function applyEditorPerformanceProfile(doc: OpenDocument) {
     readOnlyMessage: { value: doc.readOnlyReason || "当前文档只读" },
     minimap: { enabled: !large && state.minimap },
     wordWrap: !large && state.wordWrap ? "on" : "off",
+    cursorSmoothCaretAnimation: state.smoothCaretAnimation ? "on" : "off",
     renderWhitespace: large ? "none" : state.renderWhitespace,
     fontFamily: editorFont,
     fontSize: state.fontSize,
@@ -5744,6 +5757,7 @@ function renderSettingsMenu() {
   setFontInputValue("settingsEditorFontCustom", state.editorFontCustom, state.editorFontMode === "custom");
   setSegmentedValue("settingsWordWrapControl", state.wordWrap ? "on" : "off");
   setSegmentedValue("settingsMinimapControl", state.minimap ? "on" : "off");
+  setSegmentedValue("settingsCaretAnimationControl", state.smoothCaretAnimation ? "on" : "off");
   setSegmentedValue("settingsWhitespaceControl", state.renderWhitespace);
   setSegmentedValue("settingsKeymapProfileControl", state.keymapProfile);
   setSegmentedValue("settingsMarkdownWidthControl", state.markdownContentWidth);
@@ -6200,6 +6214,7 @@ function setFontSize(size: number) {
 function resetEditorView() {
   state.wordWrap = false;
   state.minimap = false;
+  state.smoothCaretAnimation = false;
   state.renderWhitespace = "selection";
   state.fontSize = DEFAULT_EDITOR_FONT_SIZE;
   state.shellFontMode = "preset";
@@ -8324,6 +8339,7 @@ async function restoreSession() {
       : "typora";
     state.wordWrap = snapshot.wordWrap ?? state.wordWrap;
     state.minimap = snapshot.minimap ?? state.minimap;
+    state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
     state.renderWhitespace = snapshot.renderWhitespace ?? state.renderWhitespace;
     state.fontSize = snapshot.fontSize ?? state.fontSize;
     state.shellFontMode = normalizeFontMode(snapshot.shellFontMode, state.shellFontMode);
@@ -8604,6 +8620,7 @@ async function saveSession() {
     searchMode: getSearchMode(),
     wordWrap: state.wordWrap,
     minimap: state.minimap,
+    smoothCaretAnimation: state.smoothCaretAnimation,
     renderWhitespace: state.renderWhitespace,
     fontSize: state.fontSize,
     shellFontMode: state.shellFontMode,
