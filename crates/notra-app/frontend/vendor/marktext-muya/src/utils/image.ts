@@ -150,7 +150,11 @@ export async function loadImage(url: string, detectContentType = false): Promise
             return Promise.reject('not an image.');
     }
 
-    return new Promise((resolve, reject) => {
+    const attempt = () => new Promise<{
+        url: string;
+        width: number;
+        height: number;
+    }>((resolve, reject) => {
         const image = new Image();
         image.referrerPolicy = 'no-referrer';
         image.decoding = 'async';
@@ -167,6 +171,20 @@ export async function loadImage(url: string, detectContentType = false): Promise
         };
         image.src = url;
     });
+
+    try {
+        return await attempt();
+    }
+    catch (error) {
+        // A transient WebView/CDN failure should not leave a pasted remote
+        // image permanently broken until an unrelated editor re-render. Retry
+        // remote sources once; local files and data URLs retain their existing
+        // single-attempt behavior.
+        if (!/^https?:\/\//i.test(url))
+            throw error;
+
+        return attempt();
+    }
 }
 
 // Only a same-origin URL can have its Content-Type read from the renderer: a

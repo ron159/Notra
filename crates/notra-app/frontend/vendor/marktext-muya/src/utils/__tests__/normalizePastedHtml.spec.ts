@@ -51,3 +51,55 @@ describe('normalizePastedHTML — bare URL link normalization', () => {
         expect(markdown).toContain(`[${url}](${url})`);
     });
 });
+
+describe('normalizePastedHTML — empty anchor normalization', () => {
+    it('removes empty heading permalink anchors', async () => {
+        const out = await normalizePastedHTML(
+            '<h2>用户权限<a href="https://example.com/doc#permissions"></a></h2>',
+        );
+        const markdown = new HtmlToMarkdown({ bulletListMarker: '-' }).generate(out);
+
+        expect(markdown).toBe('## 用户权限');
+        expect(markdown).not.toContain('[](');
+    });
+
+    it('preserves linked images', async () => {
+        const out = await normalizePastedHTML(
+            '<a href="https://example.com/full"><img src="https://example.com/thumb.png" alt="截图"></a>',
+        );
+        const markdown = new HtmlToMarkdown({ bulletListMarker: '-' }).generate(out);
+
+        expect(out).toContain('<a href="https://example.com/full">');
+        expect(markdown).toContain('[![截图](https://example.com/thumb.png)](https://example.com/full)');
+    });
+});
+
+describe('normalizePastedHTML — lazy image normalization', () => {
+    it('promotes a Blog Garden data-src image to a Markdown image', async () => {
+        const url = 'https://img2024.cnblogs.com/blog/3798513/202608/inline-01.png';
+        const out = await normalizePastedHTML(
+            `<img alt="inline-01.png" loading="lazy" data-src="${url}" class="lazyload">`,
+        );
+        const markdown = new HtmlToMarkdown({ bulletListMarker: '-' }).generate(out);
+
+        expect(out).toContain(`src="${url}"`);
+        expect(out).not.toContain('data-src');
+        expect(markdown).toBe(`![inline-01.png](${url})`);
+    });
+
+    it('keeps an ordinary src image unchanged', async () => {
+        const url = 'https://example.com/image.png';
+        const out = await normalizePastedHTML(`<img alt="截图" src="${url}">`);
+        const markdown = new HtmlToMarkdown({ bulletListMarker: '-' }).generate(out);
+
+        expect(markdown).toBe(`![截图](${url})`);
+    });
+
+    it('does not promote an unsafe lazy image URL', async () => {
+        const out = await normalizePastedHTML(
+            '<img alt="bad" class="lazyload" data-src="javascript:alert(1)">',
+        );
+
+        expect(out).not.toContain('javascript:');
+    });
+});

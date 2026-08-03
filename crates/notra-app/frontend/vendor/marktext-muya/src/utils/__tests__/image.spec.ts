@@ -85,7 +85,8 @@ describe('checkImageContentType (#3837)', () => {
 
 describe('loadImage — undetermined content-type still attempts the load (#3837)', () => {
     // Drive the <img> load deterministically: setting `src` fires onload/onerror.
-    function stubImage(succeeds: boolean) {
+    function stubImageSequence(results: boolean[]) {
+        let attemptIndex = 0;
         class FakeImage {
             width = 10;
             height = 10;
@@ -98,12 +99,19 @@ describe('loadImage — undetermined content-type still attempts the load (#3837
 
             set src(v: string) {
                 this._src = v;
+                const succeeds = results[attemptIndex++] ?? false;
                 queueMicrotask(() =>
                     succeeds ? this.onload?.() : this.onerror?.(new Error('load failed')),
                 );
             }
         }
         vi.stubGlobal('Image', FakeImage);
+
+        return () => attemptIndex;
+    }
+
+    function stubImage(succeeds: boolean) {
+        return stubImageSequence([succeeds]);
     }
 
     afterEach(() => {
@@ -128,6 +136,30 @@ describe('loadImage — undetermined content-type still attempts the load (#3837
         );
         stubImage(true);
         await expect(loadImage(sameOrigin('/page'), true)).rejects.toBe('not an image.');
+    });
+
+    it('retries a remote image once after a transient load failure', async () => {
+        const attempts = stubImageSequence([false, true]);
+
+        await expect(loadImage('https://example.com/image.png')).resolves.toMatchObject({
+            width: 10,
+            height: 10,
+        });
+        expect(attempts()).toBe(2);
+    });
+
+    it('stops after two failed remote image attempts', async () => {
+        const attempts = stubImageSequence([false, false]);
+
+        await expect(loadImage('https://example.com/missing.png')).rejects.toThrow('load failed');
+        expect(attempts()).toBe(2);
+    });
+
+    it('does not retry a failed local image', async () => {
+        const attempts = stubImageSequence([false, true]);
+
+        await expect(loadImage('file:///tmp/missing.png')).rejects.toThrow('load failed');
+        expect(attempts()).toBe(1);
     });
 });
 

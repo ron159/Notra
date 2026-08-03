@@ -68,14 +68,16 @@ export default function link(
         && isLengthEven(token.backlash.second)
     ) {
         if (!token.children.length && !token.backlash.first) {
-            // no-text-link
+            // Empty links have no rendered content in Markdown. Keep their
+            // source editable when the cursor enters the token, but hide the
+            // permalink syntax in the normal WYSIWYG view.
             return [
                 h(
-                    `span.${CLASS_NAMES.MU_GRAY}.${CLASS_NAMES.MU_REMOVE}`,
+                    `span.${className}.${CLASS_NAMES.MU_REMOVE}`,
                     firstMiddleBracket,
                 ),
                 h(
-                    `a.${CLASS_NAMES.MU_NO_TEXT_LINK}.${CLASS_NAMES.MU_INLINE_RULE}`,
+                    `a.${CLASS_NAMES.MU_NO_TEXT_LINK}.${CLASS_NAMES.MU_INLINE_RULE}.${className}`,
                     {
                         props: {
                             href: sanitizeHyperlink(
@@ -96,7 +98,7 @@ export default function link(
                         ),
                     ],
                 ),
-                h(`span.${CLASS_NAMES.MU_GRAY}.${CLASS_NAMES.MU_REMOVE}`, lastBracket),
+                h(`span.${className}.${CLASS_NAMES.MU_REMOVE}`, lastBracket),
             ];
         }
         else {

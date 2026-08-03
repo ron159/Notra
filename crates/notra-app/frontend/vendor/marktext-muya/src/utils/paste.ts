@@ -76,11 +76,33 @@ export async function normalizePastedHTML(
     // Prevent XSS and sanitize HTML.
     const sanitizedHtml = sanitize(
         html,
-        PREVIEW_DOMPURIFY_CONFIG,
+        {
+            ...PREVIEW_DOMPURIFY_CONFIG,
+            // Keep only the common lazy-image source attributes long enough
+            // to promote them to a standard `src`. The final sanitize pass
+            // below removes them and validates the promoted URL as an image
+            // source.
+            ADD_ATTR: ['data-src', 'data-original', 'data-lazy-src'],
+        },
         false,
     ) as string;
     const tempWrapper = document.createElement('div');
     tempWrapper.innerHTML = sanitizedHtml;
+
+    // Documentation sites commonly omit `src` until their lazy-loader runs.
+    // Clipboard HTML can therefore contain only `data-src`, which Turndown
+    // cannot recognize as an image. Promote the deferred source before the
+    // HTML-to-Markdown conversion.
+    for (const image of Array.from(tempWrapper.querySelectorAll('img'))) {
+        const lazySource = [
+            image.getAttribute('data-src'),
+            image.getAttribute('data-original'),
+            image.getAttribute('data-lazy-src'),
+        ].find(value => value?.trim());
+
+        if (lazySource)
+            image.setAttribute('src', lazySource.trim());
+    }
 
     // Special process for turndown.js, needed for Number app on macOS.
     const tables = Array.from(tempWrapper.querySelectorAll('table'));
@@ -120,7 +142,16 @@ export async function normalizePastedHTML(
 
     for (const link of links) {
         const href = link.getAttribute('href');
-        const text = link.textContent;
+        const text = link.textContent ?? '';
+
+        // Documentation sites often append an empty permalink anchor to each
+        // heading. Turndown serializes it as `[](url)`, which becomes a long,
+        // visible link in the WYSIWYG editor. Drop only anchors with no visible
+        // content while preserving linked images and other media.
+        if (!text.trim() && !link.querySelector('img, picture, video, audio')) {
+            link.remove();
+            continue;
+        }
 
         // Only unlink a bare URL (text === href). muyajs guards with
         // `URL_REG.test(href)` so a non-URL link whose text happens to equal its
@@ -148,7 +179,9 @@ export async function normalizePastedHTML(
         }
     }
 
-    return tempWrapper.innerHTML;
+    // Validate promoted image URLs using DOMPurify's normal `src` handling and
+    // strip the temporary lazy-loading attributes from the returned HTML.
+    return sanitize(tempWrapper.innerHTML, PREVIEW_DOMPURIFY_CONFIG, false) as string;
 }
 
 // Sniffs whether `text` looks like a single HTML `<table>` blob and nothing
