@@ -1,3 +1,4 @@
+pub mod analyse;
 pub mod document;
 pub mod fs;
 pub mod search;

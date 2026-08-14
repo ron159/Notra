@@ -1,0 +1,46 @@
+{
+  "oracleStatus": "provisional_not_binary_verified",
+  "sourceLines": [2, 3],
+  "totalMatches": 3,
+  "lines": [
+    {
+      "line": 2,
+      "matchingPatterns": [1, 2],
+      "segments": [
+        {
+          "start": 0,
+          "end": 6,
+          "pattern": 1,
+          "hidden": false,
+          "bold": false,
+          "foreground": "#FF0000",
+          "background": "#FFFFFF"
+        },
+        {
+          "start": 6,
+          "end": 13,
+          "pattern": 2,
+          "hidden": false,
+          "bold": true,
+          "foreground": "#0000FF",
+          "background": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "line": 3,
+      "matchingPatterns": [1],
+      "segments": [
+        {
+          "start": 0,
+          "end": 10,
+          "pattern": 1,
+          "hidden": false,
+          "bold": false,
+          "foreground": "#FF0000",
+          "background": "#FFFFFF"
+        }
+      ]
+    }
+  ]
+}

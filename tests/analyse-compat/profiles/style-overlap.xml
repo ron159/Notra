@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AnalyseDoc>
+  <SearchText select="line" color="red" bgColor="offWhite" comment="line base">alpha</SearchText>
+  <SearchText select="text" bold="true" color="blue" comment="text override">beta</SearchText>
+  <SearchText select="text" hide="true" italic="true" underlined="true" color="green" comment="hidden overlap">beta gamma</SearchText>
+  <SearchText select="text" hide="false" color="purple" comment="later unhide">gamma</SearchText>
+</AnalyseDoc>

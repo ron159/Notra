@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "analysePlugin": {
+    "release": "v01.14-R54",
+    "archiveUrl": "https://sourceforge.net/projects/analyseplugin/files/binaries/v01.14-R54/AnalysePlugin-v01.14-R54-ALL.zip/download",
+    "archiveFile": "AnalysePlugin-v01.14-R54-ALL.zip",
+    "archiveSha256": "d231d9ade39c60384db9063bc265ba0eb210178e6c4648275ee0e07a3ea943c0",
+    "x64DllMember": "AnalysePlugin-v01.14-R54-x64/AnalysePlugin.dll",
+    "x64DllSha256": "502ce25f7553cc05928df8e3c6b56827bb2eee9db82a94edcb71ef1496c71594",
+    "x86DllMember": "AnalysePlugin-v01.14-R54-x86/AnalysePlugin.dll",
+    "x86DllSha256": "9b0b399991e0c80be8cd1b01d1d2b1227ccee5210a03216d20165eddc534737e"
+  },
+  "notepadPlusPlus": {
+    "release": "8.4.8",
+    "architecture": "x86-64",
+    "archiveUrl": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.4.8/npp.8.4.8.portable.x64.zip",
+    "archiveFile": "npp.8.4.8.portable.x64.zip",
+    "archiveSha256": "29eba8e7760db4b30d9d664b3de66b33c855036c579a306ede73c651453a4409",
+    "executable": "notepad++.exe",
+    "executableSha256": "6eebed1fd47637616e93a797fe061d6504ad81454a822ec3bfd172a0f922c884"
+  }
+}

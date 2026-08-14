@@ -11,6 +11,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
+use crate::analyse::AnalyseService;
 use crate::session_store::SessionStore;
 use crate::shell_integration::ShellIntegrationStatus;
 
@@ -367,6 +368,7 @@ pub fn run() {
             store.initialize().map_err(std::io::Error::other)?;
             app.manage(store);
             app.manage(OpenRequestQueue::default());
+            app.manage(AnalyseService::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -398,6 +400,16 @@ pub fn run() {
             set_default_app_candidate,
             supported_languages,
             supported_encodings,
+            crate::analyse::run_analyse,
+            crate::analyse::run_analyse_path,
+            crate::analyse::cancel_analyse,
+            crate::analyse::read_analyse_result_chunk,
+            crate::analyse::release_analyse_result,
+            crate::analyse::find_analyse_result,
+            crate::analyse::serialize_analyse_rtf,
+            crate::analyse::serialize_analyse_html,
+            crate::analyse::parse_analyse_profile,
+            crate::analyse::write_analyse_profile,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Notra");

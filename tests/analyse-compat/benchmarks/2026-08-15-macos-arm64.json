@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-15",
+  "purpose": "Compare owned reads with read-only mmap for the same Analyse engine and fixture",
+  "host": {
+    "os": "macOS",
+    "version": "27.0",
+    "architecture": "arm64",
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)"
+  },
+  "build": {
+    "profile": "release",
+    "baseCommit": "82bf1d7c599897b7c0604c4e17d5e6c3337715ae",
+    "phase5ChangesUncommitted": true
+  },
+  "fixture": {
+    "recordBytes": 128,
+    "errorRecordsPerMiB": 1,
+    "patterns": [
+      "Normal: ERROR",
+      "Regex: (?<=code=)9001"
+    ]
+  },
+  "results": [
+    {
+      "mode": "owned",
+      "bytes": 104857600,
+      "loadMs": 24,
+      "analyseMs": 61,
+      "elapsedMs": 85,
+      "totalMatches": 100,
+      "resultLines": 100
+    },
+    {
+      "mode": "mmap",
+      "bytes": 104857600,
+      "loadMs": 6,
+      "analyseMs": 57,
+      "elapsedMs": 64,
+      "totalMatches": 100,
+      "resultLines": 100
+    },
+    {
+      "mode": "owned",
+      "bytes": 524288000,
+      "loadMs": 84,
+      "analyseMs": 242,
+      "elapsedMs": 327,
+      "totalMatches": 500,
+      "resultLines": 500
+    },
+    {
+      "mode": "mmap",
+      "bytes": 524288000,
+      "loadMs": 32,
+      "analyseMs": 230,
+      "elapsedMs": 263,
+      "totalMatches": 500,
+      "resultLines": 500
+    },
+    {
+      "mode": "owned",
+      "bytes": 1073741824,
+      "loadMs": 319,
+      "analyseMs": 744,
+      "elapsedMs": 1063,
+      "totalMatches": 1024,
+      "resultLines": 1024
+    },
+    {
+      "mode": "mmap",
+      "bytes": 1073741824,
+      "loadMs": 72,
+      "analyseMs": 500,
+      "elapsedMs": 576,
+      "totalMatches": 1024,
+      "resultLines": 1024
+    }
+  ],
+  "decision": {
+    "productionReadMode": "owned",
+    "mmapStatus": "benchmark-only",
+    "reason": "mmap is materially faster but a concurrently truncated external file can terminate the process; enable it only after an immutable snapshot or cross-platform stability contract exists"
+  }
+}

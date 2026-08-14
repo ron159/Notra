@@ -4,6 +4,7 @@
 compile_error!("Notra release builds must enable the custom-protocol feature");
 
 mod app;
+mod analyse;
 mod session_store;
 mod shell_integration;
 

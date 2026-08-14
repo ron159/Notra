@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "oracleStatus": "pending_windows_execution",
+  "cases": [
+    {
+      "id": "search-normal-escaped-unicode",
+      "fixture": "fixtures/search-corpus.txt",
+      "profile": "profiles/search-corpus.xml",
+      "covers": [
+        "normal",
+        "escaped",
+        "case-sensitive",
+        "case-insensitive",
+        "whole-word",
+        "cross-line",
+        "CJK",
+        "emoji"
+      ]
+    },
+    {
+      "id": "regex-core",
+      "fixture": "fixtures/regex-corpus.txt",
+      "profile": "profiles/regex-corpus.xml",
+      "covers": [
+        "anchors",
+        "capture",
+        "backreference",
+        "lookahead",
+        "lookbehind",
+        "greedy-lazy",
+        "POSIX-class",
+        "universal-newline",
+        "dot-newline",
+        "Unicode",
+        "zero-length",
+        "invalid-regex"
+      ]
+    },
+    {
+      "id": "style-overlap",
+      "fixture": "fixtures/style-overlap.txt",
+      "profile": "profiles/style-overlap.xml",
+      "covers": [
+        "selection-line",
+        "selection-text",
+        "foreground",
+        "background",
+        "bold",
+        "italic",
+        "underline",
+        "hide",
+        "overlap",
+        "later-pattern-wins"
+      ]
+    },
+    {
+      "id": "xml-runtime-attributes",
+      "fixture": "fixtures/phase2-literal.txt",
+      "profile": "profiles/phase1-basics.xml",
+      "covers": [
+        "missing-defaults",
+        "doSearch",
+        "escaped",
+        "named-color",
+        "hex-color",
+        "whitespace",
+        "unknown-attribute",
+        "hits-ignored-on-read"
+      ]
+    }
+  ]
+}

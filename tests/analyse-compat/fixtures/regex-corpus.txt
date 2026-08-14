@@ -1,0 +1,10 @@
+ERROR wlan0
+foobar
+foo middle foo
+a123b456b
+digits 123
+left
+middle
+right
+Unicode 中😀
+last

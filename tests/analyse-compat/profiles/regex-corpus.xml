@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AnalyseDoc>
+  <SearchText searchType="regex" comment="anchor">^ERROR</SearchText>
+  <SearchText searchType="regex" comment="capture backreference">(foo).*\1</SearchText>
+  <SearchText searchType="regex" comment="lookahead">foo(?=bar)</SearchText>
+  <SearchText searchType="regex" comment="lookbehind">(?&lt;=ERROR )wlan0</SearchText>
+  <SearchText searchType="regex" comment="lazy">a.*?b</SearchText>
+  <SearchText searchType="regex" comment="POSIX class">[[:digit:]]+</SearchText>
+  <SearchText searchType="regex" comment="universal newline">\R</SearchText>
+  <SearchText searchType="rgx_multiline" comment="dot newline">left.*right</SearchText>
+  <SearchText searchType="regex" comment="zero length">(?=.)</SearchText>
+  <SearchText searchType="regex" comment="invalid regex">(</SearchText>
+</AnalyseDoc>

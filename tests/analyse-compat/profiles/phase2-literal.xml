@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AnalyseDoc>
+  <SearchText color="red" group="severity">ERROR</SearchText>
+  <SearchText select="text" bold="true" color="blue" group="detail">timeout</SearchText>
+</AnalyseDoc>

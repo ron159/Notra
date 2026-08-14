@@ -118,6 +118,11 @@ import {
   type KeybindingOverrides,
   type KeymapProfile,
 } from "./keybindings";
+import {
+  createAnalysePanel,
+  type AnalysePanelController,
+  type AnalysePanelSettings,
+} from "./analysePanel";
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
@@ -239,15 +244,16 @@ interface ClosedDocumentSnapshot extends DocumentDto {
   viewState?: monaco.editor.ICodeEditorViewState;
 }
 
-type CommandCategory = "文件" | "标签" | "编辑" | "选择" | "查找" | "导航" | "视图" | "书签" | "Markdown";
+type CommandCategory = "文件" | "标签" | "编辑" | "选择" | "查找" | "Analyse" | "导航" | "视图" | "书签" | "Markdown";
 
-const KEYBINDING_CATEGORY_ORDER: CommandCategory[] = ["文件", "标签", "编辑", "选择", "查找", "导航", "视图", "书签", "Markdown"];
+const KEYBINDING_CATEGORY_ORDER: CommandCategory[] = ["文件", "标签", "编辑", "选择", "查找", "Analyse", "导航", "视图", "书签", "Markdown"];
 const KEYBINDING_CATEGORY_ICONS: Record<CommandCategory, string> = {
   "文件": "FileText",
   "标签": "Files",
   "编辑": "Edit3",
   "选择": "MousePointerClick",
   "查找": "Search",
+  "Analyse": "Search",
   "导航": "Map",
   "视图": "MonitorCog",
   "书签": "NotebookPen",
@@ -290,6 +296,8 @@ interface SessionSnapshot {
   documentViews: Record<string, monaco.editor.ICodeEditorViewState>;
   recentFiles: string[];
   recentWorkspaces: string[];
+  analyseRecentProfiles?: string[];
+  analyseSettings?: Partial<AnalysePanelSettings>;
   workspaceRoot: string | null;
   workMode: WorkMode;
   showDirectory: boolean;
@@ -424,7 +432,7 @@ type MarkdownEditMode = "wysiwyg" | "split" | "source";
 type MarkdownContentWidth = "typora" | "compact" | "wide" | "full";
 type DocumentOrigin = "standalone" | "workspace";
 type FindView = "find" | "replace" | "workspace-find" | "workspace-replace";
-type RightTool = "search" | "outline";
+type RightTool = "search" | "outline" | "analyse";
 type SearchScope = "current" | "open" | "workspace";
 type WorkspaceSearchStatus = "idle" | "searching" | "previewing" | "applying" | "error";
 type WorkspaceSearchAction = "search" | "preview" | "apply";
@@ -748,6 +756,17 @@ const EDITOR_FONT_LABELS: Record<EditorFontPreset, string> = {
   sourceCodePro: "Source Code Pro",
 };
 
+const DEFAULT_ANALYSE_SETTINGS: AnalysePanelSettings = {
+  autoUpdate: false,
+  showLineNumbers: true,
+  wordWrap: false,
+  fontSize: 12,
+  scrollSync: false,
+  boundResultPath: null,
+  enterAction: "update",
+  workingPatterns: [],
+};
+
 const state = {
   documents: [] as OpenDocument[],
   activeId: 0,
@@ -756,6 +775,8 @@ const state = {
   collapsedDirs: new Set<string>(),
   recentFiles: [] as string[],
   recentWorkspaces: [] as string[],
+  analyseRecentProfiles: [] as string[],
+  analyseSettings: { ...DEFAULT_ANALYSE_SETTINGS },
   searchHistory: [] as string[],
   replaceHistory: [] as string[],
   searchFavorites: [] as string[],
@@ -845,6 +866,9 @@ let recordingKeybindingStrokes: string[] = [];
 let recordingKeybindingTimer = 0;
 const collapsedKeybindingCategories = new Set<CommandCategory>(KEYBINDING_CATEGORY_ORDER.slice(1));
 let bookmarkDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
+let analyseBookmarkDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
+let analysePanel: AnalysePanelController | null = null;
+const analyseBookmarkLines = new globalThis.Map<number, number[]>();
 let tabMenuDocumentId = 0;
 let renderedTabsSignature = "";
 let tabScrollFrame = 0;
@@ -930,7 +954,8 @@ type TextInputOptions = {
 };
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const appWindow = getCurrentWindow();
+const isTauriRuntime = "__TAURI_INTERNALS__" in window;
+const appWindow = isTauriRuntime ? getCurrentWindow() : null;
 const lucideIcons: Record<string, IconNode> = {
   AlignCenter,
   AlignLeft,
@@ -1234,7 +1259,61 @@ function bootstrap() {
   searchDecorations = editor.createDecorationsCollection();
   activeSearchDecoration = editor.createDecorationsCollection();
   bookmarkDecorations = editor.createDecorationsCollection();
-  editor.onDidScrollChange(syncMarkdownPreviewScroll);
+  analyseBookmarkDecorations = editor.createDecorationsCollection();
+  analysePanel = createAnalysePanel($("analyseToolPane"), {
+    getDocument: () => {
+      const doc = activeDocument();
+      return {
+        id: doc.id,
+        revision: doc.model.getVersionId(),
+        text: doc.model.getValue(),
+        title: doc.title,
+        path: doc.path ?? null,
+        fileSize: doc.fileSize,
+        dirty: doc.dirty,
+        largeFile: doc.largeFile,
+      };
+    },
+    getSelectedText: selectedSourceTextForAnalyse,
+    getSourceLine: () => editor.getPosition()?.lineNumber ?? 1,
+    navigate: (documentId, line) => {
+      if (!state.documents.some((doc) => doc.id === documentId)) return;
+      activateDocument(documentId);
+      editor.setPosition({ lineNumber: line, column: 1 });
+      editor.revealLineInCenterIfOutsideViewport(line);
+      editor.focus();
+    },
+    revealSource: (documentId, line) => {
+      if (activeDocument().id !== documentId) return;
+      editor.revealLineInCenterIfOutsideViewport(line);
+    },
+    setBookmarkLines: (documentId, lines) => {
+      if (lines.length > 0) analyseBookmarkLines.set(documentId, [...new Set(lines)].sort((a, b) => a - b));
+      else analyseBookmarkLines.delete(documentId);
+      renderAnalyseBookmarkDecorations();
+    },
+    getRecentProfilePaths: () => state.analyseRecentProfiles,
+    rememberProfilePath: (path) => {
+      state.analyseRecentProfiles = [
+        path,
+        ...state.analyseRecentProfiles.filter((item) => normalizePathForCompare(item) !== normalizePathForCompare(path)),
+      ].slice(0, 20);
+      analysePanel?.syncRecentProfiles();
+      scheduleSessionSave();
+    },
+    getDefaultDirectory: () => preferredDialogDirectory(),
+    getSettings: () => state.analyseSettings,
+    updateSettings: (settings) => {
+      state.analyseSettings = settings;
+      scheduleSessionSave();
+    },
+    log,
+  });
+  editor.onDidScrollChange(() => {
+    syncMarkdownPreviewScroll();
+    const line = editor.getVisibleRanges()[0]?.startLineNumber;
+    if (line) analysePanel?.syncSourceLine(line);
+  });
   const editorResizeObserver = new ResizeObserver(() => requestEditorLayout(!paneResizeActive()));
   editorResizeObserver.observe($("editor"));
   registerAppCommands();
@@ -1429,20 +1508,33 @@ function renderTabOverflowList(docs = invisibleTabDocuments()) {
 }
 
 function bindFileDrop() {
+  if (!appWindow) return;
   void appWindow.onDragDropEvent(({ payload }) => {
     if (payload.type === "leave") {
       setFileDropActive(false);
+      setAnalyseDropActive(false);
       return;
     }
 
     const insideEditor = isDropPositionInsideEditor(payload.position);
+    const insideAnalyse = isDropPositionInsideElement(payload.position, "analyseToolPane");
     if (payload.type === "enter" || payload.type === "over") {
       setFileDropActive(insideEditor);
+      setAnalyseDropActive(insideAnalyse);
       return;
     }
 
     setFileDropActive(false);
-    if (!insideEditor || payload.paths.length === 0) return;
+    setAnalyseDropActive(false);
+    if (payload.paths.length === 0) return;
+    if (insideAnalyse && analysePanel) {
+      const profilePath = payload.paths.find((path) => path.toLowerCase().endsWith(".xml")) ?? payload.paths[0];
+      fileDropTask = fileDropTask
+        .then(() => analysePanel?.loadProfilePath(profilePath, "replace"))
+        .catch((error) => log(`拖放加载 Analyse Profile 失败：${String(error)}`));
+      return;
+    }
+    if (!insideEditor) return;
     fileDropTask = fileDropTask
       .then(() => openDroppedFiles(payload.paths))
       .catch((error) => log(`拖放打开失败：${String(error)}`));
@@ -1450,7 +1542,13 @@ function bindFileDrop() {
 }
 
 function isDropPositionInsideEditor(position: { x: number; y: number }) {
-  const rect = $<HTMLElement>("editorArea").getBoundingClientRect();
+  return isDropPositionInsideElement(position, "editorArea");
+}
+
+function isDropPositionInsideElement(position: { x: number; y: number }, id: string) {
+  const element = $<HTMLElement>(id);
+  if (element.classList.contains("hidden")) return false;
+  const rect = element.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
   const x = position.x / scale;
   const y = position.y / scale;
@@ -1459,6 +1557,10 @@ function isDropPositionInsideEditor(position: { x: number; y: number }) {
 
 function setFileDropActive(active: boolean) {
   $("editorArea").classList.toggle("file-drop-active", active);
+}
+
+function setAnalyseDropActive(active: boolean) {
+  $("analyseToolPane").classList.toggle("analyse-drop-active", active);
 }
 
 async function openDroppedFiles(paths: string[]) {
@@ -1556,6 +1658,24 @@ function registerAppCommands() {
     command("search.workspaceReplace", "在文件中替换", "查找", () => openWorkspaceFind("workspace-replace"), { allowInInput: true, enabled: () => Boolean(state.workspace) }),
     command("search.findAllCurrent", "查找当前文件全部结果", "查找", () => findCurrent(true), { allowInInput: true, when: () => isEditorSurfaceFocused() }),
     command("search.clearResults", "清除查找结果", "查找", clearSearchResults),
+    command("analyse.togglePanel", "切换 Analyse 面板", "Analyse", toggleAnalysePanel, { allowInInput: true, priority: 20 }),
+    command("analyse.addSelectionAsPattern", "将选区添加为 Analyse Pattern", "Analyse", addSelectionAsAnalysePattern, {
+      when: () => Boolean(selectedSourceTextForAnalyse()),
+      priority: 20,
+    }),
+    command("analyse.run", "运行 Analyse", "Analyse", () => analysePanel?.run(), { allowInInput: true }),
+    command("analyse.cancel", "取消 Analyse", "Analyse", () => analysePanel?.cancel(), { allowInInput: true }),
+    command("analyse.clear", "清空 Analyse Pattern", "Analyse", () => analysePanel?.clearPatterns(), { allowInInput: true }),
+    command("analyse.openProfile", "加载 Analyse Profile", "Analyse", () => analysePanel?.loadProfile(), { allowInInput: true }),
+    command("analyse.saveProfile", "保存 Analyse Profile", "Analyse", () => analysePanel?.saveProfile(), { allowInInput: true }),
+    command("analyse.options", "聚焦 Analyse 配置", "Analyse", () => {
+      openAnalysePanel();
+      analysePanel?.focusOptions();
+    }, { allowInInput: true }),
+    command("analyse.focusResult", "聚焦 Analyse 结果", "Analyse", () => {
+      openAnalysePanel();
+      analysePanel?.focusResult();
+    }, { allowInInput: true }),
     command("navigation.goToLine", "跳转到行", "导航", goToLine, { when: () => isEditorSurfaceFocused() }),
     command("navigation.quickOpen", "快速打开文件", "导航", openQuickOpen, { allowInInput: true }),
     command("navigation.commandPalette", "命令面板", "导航", () => openCommandPalette("commands"), { allowInInput: true }),
@@ -1844,6 +1964,7 @@ function bindActions() {
     setRightTool("search");
   });
   $("rightOutlineToolButton").addEventListener("click", () => setRightTool("outline"));
+  $("rightAnalyseToolButton").addEventListener("click", openAnalysePanel);
   $("languageButton").addEventListener("click", () => toggleMenu("languageMenu"));
   $("encodingButton").addEventListener("click", () => toggleMenu("encodingMenu"));
   $("lineEndingButton").addEventListener("click", () => toggleMenu("lineEndingMenu"));
@@ -2849,15 +2970,15 @@ function bindWindowControls() {
       toggleTitlebarMaximize();
       return;
     }
-    void appWindow.startDragging();
+    void appWindow?.startDragging();
   });
   titlebar.addEventListener("dblclick", (event) => {
     if (isInteractiveTarget(event.target)) return;
     event.preventDefault();
     toggleTitlebarMaximize();
   });
-  $("windowMinimize").addEventListener("click", () => void appWindow.minimize());
-  $("windowMaximize").addEventListener("click", () => void appWindow.toggleMaximize());
+  $("windowMinimize").addEventListener("click", () => void appWindow?.minimize());
+  $("windowMaximize").addEventListener("click", () => void appWindow?.toggleMaximize());
   $("windowClose").addEventListener("click", () => void requestWindowClose());
 }
 
@@ -2865,7 +2986,7 @@ function toggleTitlebarMaximize() {
   const now = window.performance.now();
   if (now - titlebarMaximizeToggleAt < 260) return;
   titlebarMaximizeToggleAt = now;
-  void appWindow.toggleMaximize();
+  void appWindow?.toggleMaximize();
 }
 
 function bindExplorerResize() {
@@ -3075,6 +3196,7 @@ function setRightSidebarWidth(
 }
 
 function bindWindowCloseGuard() {
+  if (!appWindow) return;
   void appWindow.onCloseRequested(async (event) => {
     if (windowCloseConfirmed) return;
     event.preventDefault();
@@ -3087,6 +3209,7 @@ function bindWindowCloseGuard() {
 }
 
 async function requestWindowClose() {
+  if (!appWindow) return;
   const canClose = await confirmCloseAll();
   if (!canClose) return;
   windowCloseConfirmed = true;
@@ -3275,6 +3398,7 @@ function createDocument(
     renderMarkdownOutline();
     scheduleMarkdownPreviewRender();
     if (doc.id === state.activeId) scheduleMarkdownEditorSync(doc);
+    if (doc.id === state.activeId) analysePanel?.notifyDocumentChanged(doc.id);
     scheduleSessionSave();
   });
   return doc;
@@ -5308,6 +5432,7 @@ function renderAll() {
   renderRecentFiles();
   renderRightSidebar();
   renderBookmarkDecorations();
+  renderAnalyseBookmarkDecorations();
   requestEditorLayout();
 }
 
@@ -7131,6 +7256,7 @@ function attachEditorModel(doc: OpenDocument) {
   applyEditorPerformanceProfile(doc);
   if (doc.viewState) editor.restoreViewState(doc.viewState);
   renderBookmarkDecorations();
+  renderAnalyseBookmarkDecorations();
   requestEditorLayout();
 }
 
@@ -7177,6 +7303,25 @@ function renderBookmarkDecorations() {
       overviewRuler: {
         color: state.darkMode ? "#858bff" : "#4f46e5",
         position: monaco.editor.OverviewRulerLane.Left,
+      },
+    },
+  })));
+}
+
+function renderAnalyseBookmarkDecorations() {
+  if (!analyseBookmarkDecorations || !editor?.getModel()) return;
+  const doc = activeDocument();
+  const lineCount = doc.model.getLineCount();
+  const lines = (analyseBookmarkLines.get(doc.id) ?? [])
+    .filter((line) => line >= 1 && line <= lineCount);
+  analyseBookmarkDecorations.set(lines.map((line) => ({
+    range: new monaco.Range(line, 1, line, 1),
+    options: {
+      isWholeLine: true,
+      linesDecorationsClassName: "notra-analyse-bookmark-glyph",
+      overviewRuler: {
+        color: state.darkMode ? "#f59e0b" : "#d97706",
+        position: monaco.editor.OverviewRulerLane.Center,
       },
     },
   })));
@@ -7431,7 +7576,6 @@ function toggleRightSidebar() {
   const workspace = state.mode === "workspace" && Boolean(state.workspace);
   const markdown = isMarkdownLikeDocument();
   const currentResults = hasCurrentSearchResults();
-  if (!workspace && !markdown && !currentResults) return;
   if (currentResults) {
     state.rightTool = "search";
   } else if (workspace) {
@@ -7439,7 +7583,7 @@ function toggleRightSidebar() {
     state.rightTool = "search";
     setCurrentFindDockOpen(false);
   } else {
-    state.rightTool = "outline";
+    state.rightTool = markdown ? "outline" : "analyse";
   }
   $("findPopover").classList.remove("hidden");
   $("app").classList.add("right-sidebar-open");
@@ -7451,9 +7595,7 @@ function toggleRightSidebar() {
 }
 
 function renderRightSidebarToggle() {
-  const available = (state.mode === "workspace" && Boolean(state.workspace))
-    || isMarkdownLikeDocument()
-    || hasCurrentSearchResults();
+  const available = true;
   const open = !$("findPopover").classList.contains("hidden");
   const button = $<HTMLButtonElement>("rightSidebarToggleButton");
   $("rightToolTabs").classList.toggle("hidden", !available);
@@ -7470,6 +7612,30 @@ function setRightTool(tool: RightTool) {
   state.rightTool = tool;
   renderRightSidebar();
   scheduleSessionSave();
+}
+
+function openAnalysePanel() {
+  state.rightTool = "analyse";
+  $("findPopover").classList.remove("hidden");
+  $("app").classList.add("right-sidebar-open");
+  setRightSidebarWidth(state.rightSidebarWidth);
+  renderRightSidebar();
+  renderRightSidebarToggle();
+  analysePanel?.layout();
+  scheduleSessionSave();
+}
+
+function toggleAnalysePanel() {
+  const open = !$("findPopover").classList.contains("hidden") && state.rightTool === "analyse";
+  if (open) closeRightSidebar();
+  else openAnalysePanel();
+}
+
+function addSelectionAsAnalysePattern() {
+  const selectedText = selectedSourceTextForAnalyse();
+  if (!selectedText) return;
+  openAnalysePanel();
+  analysePanel?.addSelectionAsPattern(selectedText);
 }
 
 function openMarkdownOutline() {
@@ -7489,15 +7655,19 @@ function renderRightSidebar() {
   const searchAvailable = workspace || hasCurrentSearchResults();
   $("rightSearchToolButton").classList.toggle("hidden", !searchAvailable);
   $("rightOutlineToolButton").classList.toggle("hidden", !markdown);
+  $("rightAnalyseToolButton").classList.remove("hidden");
   document.querySelectorAll<HTMLElement>(".workspace-find-view").forEach((button) => {
     button.classList.toggle("hidden", !workspace);
   });
-  if (!searchAvailable && state.rightTool === "search") state.rightTool = markdown ? "outline" : "search";
-  if (!markdown && state.rightTool === "outline") state.rightTool = searchAvailable ? "search" : "outline";
+  if (!searchAvailable && state.rightTool === "search") state.rightTool = markdown ? "outline" : "analyse";
+  if (!markdown && state.rightTool === "outline") state.rightTool = searchAvailable ? "search" : "analyse";
   $("rightSearchToolButton").classList.toggle("active", state.rightTool === "search");
   $("rightOutlineToolButton").classList.toggle("active", state.rightTool === "outline");
+  $("rightAnalyseToolButton").classList.toggle("active", state.rightTool === "analyse");
   $("searchToolPane").classList.toggle("hidden", state.rightTool !== "search");
   $("outlineToolPane").classList.toggle("hidden", state.rightTool !== "outline");
+  $("analyseToolPane").classList.toggle("hidden", state.rightTool !== "analyse");
+  analysePanel?.syncDocument();
   renderSearchSidebarResults();
   renderMarkdownOutline();
   renderRightSidebarToggle();
@@ -7519,6 +7689,14 @@ function selectedEditorTextForFind() {
   const normalized = model.getValueInRange(selection).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!normalized || normalized.includes("\n") || normalized.trim().length === 0) return "";
   return normalized.slice(0, 300);
+}
+
+function selectedSourceTextForAnalyse() {
+  if (isMarkdownWysiwygActive()) return "";
+  const selection = editor.getSelection();
+  const model = editor.getModel();
+  if (!selection || selection.isEmpty() || !model) return "";
+  return model.getValueInRange(selection);
 }
 
 function toggleMenu(id: "languageMenu" | "encodingMenu" | "lineEndingMenu" | "recentMenu") {
@@ -8312,13 +8490,35 @@ async function restoreSession() {
       );
     }
     state.recentWorkspaces = uniquePaths(snapshot.recentWorkspaces ?? []).slice(0, 20);
+    state.analyseRecentProfiles = uniquePaths(snapshot.analyseRecentProfiles ?? []).slice(0, 20);
+    analysePanel?.syncRecentProfiles();
+    state.analyseSettings = {
+      autoUpdate: snapshot.analyseSettings?.autoUpdate ?? DEFAULT_ANALYSE_SETTINGS.autoUpdate,
+      showLineNumbers: snapshot.analyseSettings?.showLineNumbers ?? DEFAULT_ANALYSE_SETTINGS.showLineNumbers,
+      wordWrap: snapshot.analyseSettings?.wordWrap ?? DEFAULT_ANALYSE_SETTINGS.wordWrap,
+      fontSize: Math.min(24, Math.max(10, Number(snapshot.analyseSettings?.fontSize) || DEFAULT_ANALYSE_SETTINGS.fontSize)),
+      scrollSync: snapshot.analyseSettings?.scrollSync ?? DEFAULT_ANALYSE_SETTINGS.scrollSync,
+      boundResultPath: typeof snapshot.analyseSettings?.boundResultPath === "string"
+        ? snapshot.analyseSettings.boundResultPath
+        : null,
+      enterAction: snapshot.analyseSettings?.enterAction === "search"
+        || snapshot.analyseSettings?.enterAction === "add"
+        ? snapshot.analyseSettings.enterAction
+        : DEFAULT_ANALYSE_SETTINGS.enterAction,
+      workingPatterns: Array.isArray(snapshot.analyseSettings?.workingPatterns)
+        ? snapshot.analyseSettings.workingPatterns
+        : [],
+    };
+    analysePanel?.syncSettings();
     state.collapsedDirs = new Set(snapshot.collapsedDirs ?? []);
     state.searchHistory = (snapshot.searchHistory ?? []).slice(0, 30);
     state.replaceHistory = (snapshot.replaceHistory ?? []).slice(0, 30);
     state.searchFavorites = (snapshot.searchFavorites ?? []).slice(0, 30);
     state.findView = snapshot.findView ?? "find";
     state.mode = snapshot.workMode ?? (snapshot.workspaceRoot ? "workspace" : "single");
-    state.rightTool = snapshot.rightTool === "outline" ? "outline" : "search";
+    state.rightTool = snapshot.rightTool === "outline" || snapshot.rightTool === "analyse"
+      ? snapshot.rightTool
+      : "search";
     state.rightSidebarWidth = snapshot.rightSidebarWidth ?? state.rightSidebarWidth;
     state.explorerWidth = Number.isFinite(snapshot.explorerWidth)
       ? snapshot.explorerWidth ?? DEFAULT_EXPLORER_WIDTH
@@ -8429,8 +8629,7 @@ async function restoreSession() {
       placeholder.model.dispose();
     }
 
-    const rightSidebarAvailable =
-      (state.mode === "workspace" && Boolean(state.workspace)) || isMarkdownLikeDocument();
+    const rightSidebarAvailable = true;
     const rightSidebarOpen = Boolean(snapshot.rightSidebarOpen) && rightSidebarAvailable;
     $("findPopover").classList.toggle("hidden", !rightSidebarOpen);
     $("app").classList.toggle("right-sidebar-open", rightSidebarOpen);
@@ -8475,6 +8674,7 @@ async function openStartupArgs() {
 }
 
 async function drainOpenRequests() {
+  if (!isTauriRuntime) return;
   const requests = await invoke<StartupArgsDto[]>("take_open_requests");
   for (const request of requests) {
     await applyOpenRequest(request);
@@ -8598,6 +8798,8 @@ async function saveSession() {
     ),
     recentFiles: uniquePaths(state.recentFiles).slice(0, 40),
     recentWorkspaces: uniquePaths(state.recentWorkspaces).slice(0, 20),
+    analyseRecentProfiles: uniquePaths(state.analyseRecentProfiles).slice(0, 20),
+    analyseSettings: state.analyseSettings,
     workspaceRoot: state.workspace?.root ?? null,
     workMode: state.mode,
     showDirectory: state.showDirectory,

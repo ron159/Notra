@@ -32,6 +32,388 @@
   --editor-font: "Cascadia Code", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
 }
 
+/* Analyse is isolated from the existing Find UI so both workflows keep their own state. */
+#analyseToolPane {
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.analyse-panel {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(116px, 0.7fr) minmax(180px, 1.3fr) auto;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.analyse-profile-bar {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  display: grid;
+  grid-template-columns: auto auto auto minmax(90px, 1fr) auto;
+  gap: 5px;
+}
+
+.analyse-profile-bar button,
+.analyse-profile-bar select {
+  min-height: 27px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+#analyseToolPane.analyse-drop-active {
+  outline: 2px solid var(--primary);
+  outline-offset: -3px;
+}
+
+.analyse-panel button,
+.analyse-panel input,
+.analyse-panel select {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+
+.analyse-panel button {
+  min-height: 27px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.analyse-panel button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--surface-2);
+}
+
+.analyse-panel button.primary {
+  color: #fff;
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.analyse-panel button:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.analyse-panel-head,
+.analyse-result > header {
+  min-height: 38px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.analyse-panel-head > div,
+.analyse-result > header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analyse-panel-head span,
+.analyse-result > header span {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.analyse-auto-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.analyse-auto-update input {
+  width: 13px;
+  height: 13px;
+}
+
+.analyse-draft {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  display: grid;
+  gap: 7px;
+  overflow: auto;
+}
+
+.analyse-draft label {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.analyse-draft input,
+.analyse-draft select {
+  height: 28px;
+  padding: 3px 7px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.analyse-draft input[type="color"] {
+  width: 100%;
+  padding: 2px;
+}
+
+.analyse-search-text input {
+  width: 100%;
+}
+
+.analyse-draft-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.analyse-draft-grid label:nth-child(5) {
+  grid-column: span 2;
+}
+
+.analyse-flags,
+.analyse-actions,
+.analyse-result-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+
+.analyse-flags label,
+.analyse-result-options label {
+  display: inline-flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.analyse-flags input,
+.analyse-result-options input {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+}
+
+.analyse-result-options .analyse-font-size {
+  width: 44px;
+  height: 23px;
+  padding: 2px 4px;
+}
+
+.analyse-actions button {
+  flex: 1 1 auto;
+  font-size: 11px;
+}
+
+.analyse-patterns {
+  min-height: 0;
+  overflow: auto;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.analyse-patterns table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 11px;
+}
+
+.analyse-patterns th,
+.analyse-patterns td {
+  height: 25px;
+  padding: 3px 6px;
+  border-right: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analyse-patterns th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--text-3);
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.analyse-patterns th:nth-child(1),
+.analyse-patterns th:nth-child(2),
+.analyse-patterns th:nth-child(6),
+.analyse-patterns th:nth-child(7) {
+  width: 46px;
+}
+
+.analyse-patterns th:nth-child(3) {
+  width: 170px;
+}
+
+.analyse-patterns tbody tr {
+  cursor: default;
+}
+
+.analyse-patterns tbody tr:hover,
+.analyse-patterns tbody tr.selected {
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+}
+
+.analyse-patterns tbody tr.disabled {
+  opacity: 0.5;
+}
+
+.analyse-pattern-error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.analyse-result {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.analyse-result-find {
+  min-width: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.analyse-result-find > input:first-child {
+  min-width: 72px;
+  height: 25px;
+  padding: 3px 6px;
+  flex: 1 1 auto;
+}
+
+.analyse-result-find select,
+.analyse-result-find button {
+  min-height: 25px;
+  padding: 2px 5px;
+  font-size: 11px;
+}
+
+.analyse-result-find label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-2);
+  font-size: 10px;
+}
+
+.analyse-result-find label input {
+  width: 12px;
+  height: 12px;
+}
+
+.analyse-result-find span {
+  min-width: 24px;
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.analyse-result-actions {
+  min-width: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.analyse-result-actions button {
+  min-height: 24px;
+  padding: 2px 6px;
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.analyse-result-actions span {
+  min-width: 88px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analyse-matching-patterns {
+  min-height: 24px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line-soft);
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analyse-result-find-match {
+  background: rgba(250, 204, 21, 0.34);
+}
+
+.analyse-result-find-active {
+  background: rgba(249, 115, 22, 0.55);
+  outline: 1px solid rgba(194, 65, 12, 0.72);
+}
+
+.analyse-result-editor {
+  min-width: 0;
+  min-height: 0;
+}
+
+.analyse-status {
+  min-height: 26px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--line-soft);
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analyse-status.error {
+  color: var(--danger);
+}
+
+.notra-analyse-bookmark-glyph {
+  width: 8px !important;
+  height: 8px !important;
+  margin-left: 5px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #d97706;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #d97706 16%, transparent);
+}
+
+@container (max-width: 380px) {
+  .analyse-draft-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 body.dark {
   color-scheme: dark;
   --bg: #121722;

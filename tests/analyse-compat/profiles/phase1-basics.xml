@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AnalyseDoc xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:noNamespaceSchemaLocation="./AnalyseDoc.xsd">
+  <SearchText>ERROR</SearchText>
+  <SearchText orderNum="20" doSearch="false" searchType="escaped"
+    matchCase="true" wholeWord="true" select="text" hide="true"
+    bold="true" italic="true" underlined="true" color="red"
+    bgColor="#102030" comment="network &amp; wifi" group="network"
+    hits="7" futureAttribute="ignored">WARN\tadapter</SearchText>
+</AnalyseDoc>

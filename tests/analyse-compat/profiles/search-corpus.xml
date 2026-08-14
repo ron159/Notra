@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AnalyseDoc>
+  <SearchText comment="case insensitive">alpha</SearchText>
+  <SearchText matchCase="true" select="text" comment="case sensitive">Alpha</SearchText>
+  <SearchText wholeWord="true" select="text" comment="whole word">cat</SearchText>
+  <SearchText searchType="escaped" comment="cross LF">跨行开始\n跨行结束</SearchText>
+  <SearchText wholeWord="true" select="text" comment="CJK boundary">中</SearchText>
+  <SearchText wholeWord="true" select="text" comment="emoji boundary">😀</SearchText>
+</AnalyseDoc>
