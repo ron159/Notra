@@ -6,6 +6,7 @@ crates/notra-app/frontend/node_modules/
 node_modules/
 .reference/
 .learnings/
+local_doc/
 .idea/
 .vscode/
 *.log

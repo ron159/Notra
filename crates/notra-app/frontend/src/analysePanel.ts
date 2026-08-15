@@ -38,6 +38,7 @@ export interface AnalysePanelHost {
   navigate: (documentId: number, line: number) => void;
   revealSource: (documentId: number, line: number) => void;
   setBookmarkLines: (documentId: number, lines: number[]) => void;
+  setResultVisible: (visible: boolean) => void;
   getRecentProfilePaths: () => string[];
   rememberProfilePath: (path: string) => void;
   getDefaultDirectory: () => string | null;
@@ -145,11 +146,14 @@ const DEFAULT_BACKGROUND = "#FFFFFF";
 
 export function createAnalysePanel(
   container: HTMLElement,
+  resultContainer: HTMLElement,
   host: AnalysePanelHost,
 ): AnalysePanelController {
   container.innerHTML = panelMarkup();
+  resultContainer.innerHTML = resultMarkup();
   const element = <T extends HTMLElement>(role: string) => {
-    const found = container.querySelector<T>(`[data-analyse-role="${role}"]`);
+    const found = container.querySelector<T>(`[data-analyse-role="${role}"]`)
+      ?? resultContainer.querySelector<T>(`[data-analyse-role="${role}"]`);
     if (!found) throw new Error(`Missing Analyse control: ${role}`);
     return found;
   };
@@ -201,7 +205,7 @@ export function createAnalysePanel(
   const resultFindDecorations = resultEditor.createDecorationsCollection();
   const styleElement = document.createElement("style");
   styleElement.dataset.analyseStyles = "true";
-  container.appendChild(styleElement);
+  resultContainer.appendChild(styleElement);
 
   writeDraft(defaultPattern(0));
   applySettings();
@@ -732,7 +736,9 @@ export function createAnalysePanel(
       for (const item of result.patternHits) hits.set(item.patternId, item.hits);
       for (const item of result.patternErrors) errors.set(item.patternId, item.message);
       renderPatterns();
+      host.setResultVisible(true);
       renderResult();
+      window.requestAnimationFrame(() => resultEditor.layout());
       host.setBookmarkLines(result.documentId, result.lines.map((line) => line.sourceLine));
       await writeBoundResult();
       setStatus(
@@ -1162,6 +1168,7 @@ export function createAnalysePanel(
     latestResult = null;
     resultDocumentId = null;
     clearResultModel();
+    host.setResultVisible(false);
   }
 
   function invalidateResult(autoRun = true) {
@@ -1235,7 +1242,10 @@ export function createAnalysePanel(
     cancel: cancelActiveRun,
     clearPatterns,
     focusOptions: () => input("search-text").focus(),
-    focusResult: () => resultEditor.focus(),
+    focusResult: () => {
+      if (latestResult) host.setResultVisible(true);
+      resultEditor.focus();
+    },
     layout: () => resultEditor.layout(),
     loadProfile,
     loadProfilePath,
@@ -1397,6 +1407,13 @@ function panelMarkup() {
           <tbody data-analyse-role="pattern-list"></tbody>
         </table>
       </section>
+      <footer class="analyse-status" data-analyse-role="status" aria-live="polite"></footer>
+    </div>
+  `;
+}
+
+function resultMarkup() {
+  return `
       <section class="analyse-result">
         <header>
           <div><strong>结果</strong><span data-analyse-role="result-summary">暂无结果</span></div>
@@ -1428,7 +1445,5 @@ function panelMarkup() {
         <div class="analyse-result-editor" data-analyse-role="result-editor"></div>
         <div class="analyse-matching-patterns" data-analyse-role="matching-patterns">当前行无匹配 Pattern</div>
       </section>
-      <footer class="analyse-status" data-analyse-role="status" aria-live="polite"></footer>
-    </div>
   `;
 }

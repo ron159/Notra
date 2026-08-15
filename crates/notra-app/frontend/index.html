@@ -1005,10 +1005,6 @@
               <button class="primary workspace-search-submit" id="previewWorkspaceReplaceButton"><span class="icon-slot workspace-action-icon" data-icon="ReplaceAll"></span><span class="workspace-action-label">预览全部替换</span></button>
             </div>
           </div>
-          <section class="find-results-pane" aria-label="搜索结果" aria-live="polite" aria-busy="false">
-            <header><strong id="findResultsTitle">搜索结果</strong><span id="findResultsSummary">暂无结果</span></header>
-            <div class="find-results-body" id="findResultsBody"></div>
-          </section>
         </div>
         </div>
         <div class="right-tool-pane hidden" id="outlineToolPane">
@@ -1016,6 +1012,30 @@
           <nav class="outline-list" id="outlineList" role="tree" aria-label="Markdown 大纲"></nav>
         </div>
         <div class="right-tool-pane hidden" id="analyseToolPane" aria-label="Analyse"></div>
+      </section>
+
+      <section class="bottom-results-dock hidden" id="bottomResultsDock" aria-label="搜索结果区域">
+        <div class="bottom-results-resize" id="bottomResultsResize" role="separator" aria-orientation="horizontal" aria-label="调整搜索结果区域高度" aria-valuemin="160" tabindex="0"></div>
+        <header class="bottom-results-tabs">
+          <div class="bottom-results-tab-list" role="tablist" aria-label="结果类型">
+            <button class="bottom-results-tab" id="bottomSearchResultsTab" type="button" role="tab" data-bottom-result="search" aria-controls="searchResultsPane">
+              <span class="icon-slot" data-icon="Search"></span><span>搜索结果</span>
+            </button>
+            <button class="bottom-results-tab" id="bottomAnalyseResultsTab" type="button" role="tab" data-bottom-result="analyse" aria-controls="analyseResultHost">
+              <span class="icon-slot" data-icon="Sigma"></span><span>Analyse 结果</span>
+            </button>
+          </div>
+          <button class="bottom-results-close" id="closeBottomResultsButton" type="button" aria-label="关闭结果区域" title="关闭结果区域">
+            <span class="icon-slot" data-icon="X"></span>
+          </button>
+        </header>
+        <div class="bottom-results-content">
+          <section class="find-results-pane hidden" id="searchResultsPane" aria-label="搜索结果" aria-live="polite" aria-busy="false">
+            <header><strong id="findResultsTitle">搜索结果</strong><span id="findResultsSummary">暂无结果</span></header>
+            <div class="find-results-body" id="findResultsBody"></div>
+          </section>
+          <section class="analyse-result-host hidden" id="analyseResultHost" aria-label="Analyse 结果"></section>
+        </div>
       </section>
 
       <footer class="statusbar">

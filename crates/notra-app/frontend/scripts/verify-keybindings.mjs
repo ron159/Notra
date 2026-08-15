@@ -50,8 +50,11 @@ if (
 ) {
   failures.push("编辑器原生剪贴板快捷键没有覆盖普通按键和组合键回退");
 }
-if (!/if \(scope === "workspace" \|\| showPanel\)/.test(mainSource)) {
-  failures.push("当前文件全部查找没有打开右侧结果面板");
+if (!mainSource.includes('if (scope !== "current" || showPanel) openBottomResults("search")')) {
+  failures.push("当前文件全部查找没有打开底部结果面板");
+}
+if (!htmlSource.includes('id="bottomResultsDock"') || !htmlSource.includes('id="searchResultsPane"')) {
+  failures.push("原生搜索结果没有挂载到底部结果区域");
 }
 if (!mainSource.includes("markdownMatchesToDto(activeMarkdownEditor.searchMatches())")) {
   failures.push("Markdown 当前文件结果没有使用 Muya 搜索坐标");

@@ -37,6 +37,7 @@
   grid-column: 1;
   grid-row: 1;
   min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -45,7 +46,7 @@
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: auto auto auto minmax(116px, 0.7fr) minmax(180px, 1.3fr) auto;
+  grid-template-rows: auto auto auto minmax(140px, 1fr) auto;
   color: var(--text);
   background: var(--surface);
 }
@@ -408,9 +409,17 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, #d97706 16%, transparent);
 }
 
-@container (max-width: 380px) {
+@container (max-width: 520px) {
   .analyse-draft-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analyse-profile-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .analyse-profile-bar [data-analyse-role="recent-profile"] {
+    grid-column: span 2;
   }
 }
 
@@ -521,14 +530,19 @@ select:focus-visible {
     "toolbar toolbar"
     "tabs right"
     "workspace right"
+    "results results"
     "status status";
   grid-template-columns: minmax(0, 1fr) 0;
-  grid-template-rows: 40px 42px 34px minmax(0, 1fr) 30px;
+  grid-template-rows: 40px 42px 34px minmax(0, 1fr) 0 30px;
   background: var(--surface);
 }
 
 #app.right-sidebar-open {
   grid-template-columns: minmax(0, 1fr) var(--right-sidebar-width);
+}
+
+#app.bottom-results-open {
+  grid-template-rows: 40px 42px 34px minmax(120px, 1fr) var(--bottom-results-height, 280px) 30px;
 }
 
 .titlebar,
@@ -561,6 +575,10 @@ select:focus-visible {
 
 .right-sidebar {
   grid-area: right;
+}
+
+.bottom-results-dock {
+  grid-area: results;
 }
 
 .titlebar,
@@ -808,6 +826,226 @@ select:focus-visible {
   .app-update-popover,
   .app-update-button.installing .app-update-dot {
     animation: none;
+  }
+}
+
+/* Search output is a shared bottom dock: editor + tool panel above, one result pane below. */
+#searchToolPane {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+#searchToolPane > .find-body {
+  max-height: none;
+  border-bottom: 0;
+}
+
+.bottom-results-dock {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-rows: 32px minmax(0, 1fr);
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.bottom-results-resize {
+  height: 8px;
+  position: absolute;
+  top: -4px;
+  right: 0;
+  left: 0;
+  z-index: 8;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.bottom-results-resize::after {
+  content: "";
+  height: 2px;
+  position: absolute;
+  top: 3px;
+  right: 0;
+  left: 0;
+  background: transparent;
+}
+
+.bottom-results-resize:hover::after,
+.bottom-results-resize:focus-visible::after,
+.resizing-results .bottom-results-resize::after {
+  background: var(--primary);
+}
+
+.resizing-results,
+.resizing-results * {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
+.bottom-results-tabs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--surface));
+}
+
+.bottom-results-tab-list {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.bottom-results-tab {
+  min-width: 0;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 0 10px;
+  color: var(--text-3);
+  background: transparent;
+  font-size: 11px;
+}
+
+.bottom-results-tab:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.bottom-results-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+}
+
+.bottom-results-tab .lucide-icon,
+.bottom-results-close .lucide-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.bottom-results-close {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 0;
+  color: var(--text-3);
+  background: transparent;
+}
+
+.bottom-results-close:hover {
+  color: var(--text);
+  border-color: var(--line-soft);
+  background: var(--surface-3);
+}
+
+.bottom-results-content,
+.bottom-results-content > section,
+.analyse-result-host,
+.analyse-result {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.bottom-results-content {
+  display: grid;
+  overflow: hidden;
+}
+
+.bottom-results-content > section {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.bottom-results-content .find-results-pane {
+  grid-template-rows: 36px minmax(0, 1fr);
+}
+
+.bottom-results-content .find-results-pane > header {
+  height: 36px;
+}
+
+.analyse-result-host {
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.analyse-result {
+  grid-template-rows: auto auto auto minmax(76px, 1fr) auto;
+}
+
+.analyse-result > header {
+  min-height: 36px;
+  height: auto;
+  flex-wrap: wrap;
+  padding: 4px 10px;
+  background: var(--surface);
+}
+
+.analyse-result > header > div,
+.analyse-result-options,
+.analyse-result-find {
+  flex-wrap: wrap;
+}
+
+.analyse-result-find > input:first-child {
+  flex: 1 1 240px;
+}
+
+.analyse-result-find > span {
+  margin-left: auto;
+}
+
+.analyse-panel-head strong,
+.analyse-result > header strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.analyse-draft input,
+.analyse-draft select,
+.analyse-profile-bar button,
+.analyse-profile-bar select,
+.analyse-panel button {
+  border-color: var(--line-soft);
+  background: var(--surface);
+}
+
+.analyse-draft input:focus,
+.analyse-draft select:focus {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+}
+
+@media (max-width: 760px), (max-height: 760px) {
+  #app.bottom-results-open {
+    grid-template-rows: 40px 42px 34px minmax(100px, 1fr) min(var(--bottom-results-height, 220px), 32vh) 30px;
+  }
+}
+
+@media (max-width: 760px), (max-height: 620px) {
+  .analyse-result-actions span {
+    display: none;
+  }
+}
+
+@media (max-height: 760px) {
+  .analyse-panel {
+    grid-template-rows: auto auto minmax(96px, auto) minmax(72px, 1fr) auto;
   }
 }
 

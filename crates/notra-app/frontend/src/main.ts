@@ -310,6 +310,7 @@ interface SessionSnapshot {
   rightSidebarOpen: boolean;
   rightTool: RightTool;
   rightSidebarWidth: number;
+  bottomResultsHeight?: number;
   explorerWidth?: number;
   markdownPreviewWidth?: number;
   treeScrollTop: number;
@@ -433,6 +434,7 @@ type MarkdownContentWidth = "typora" | "compact" | "wide" | "full";
 type DocumentOrigin = "standalone" | "workspace";
 type FindView = "find" | "replace" | "workspace-find" | "workspace-replace";
 type RightTool = "search" | "outline" | "analyse";
+type BottomResultTool = "search" | "analyse";
 type SearchScope = "current" | "open" | "workspace";
 type WorkspaceSearchStatus = "idle" | "searching" | "previewing" | "applying" | "error";
 type WorkspaceSearchAction = "search" | "preview" | "apply";
@@ -445,6 +447,13 @@ type HorizontalResizeState = {
   latestClientX: number;
   anchorX: number;
   maxWidth: number;
+};
+type VerticalResizeState = {
+  pointerId: number;
+  frameId: number;
+  latestClientY: number;
+  anchorY: number;
+  maxHeight: number;
 };
 type FontMode = "preset" | "custom";
 type ShellFontPreset = "system" | "segoe" | "yahei" | "dengxian" | "sourceHanSans" | "misans";
@@ -716,6 +725,8 @@ const MIN_EXPLORER_WIDTH = 180;
 const MAX_EXPLORER_WIDTH = 640;
 const MIN_WORKSPACE_EDITOR_WIDTH = 320;
 const EXPLORER_RESIZE_WIDTH = 6;
+const DEFAULT_BOTTOM_RESULTS_HEIGHT = 280;
+const MIN_BOTTOM_RESULTS_HEIGHT = 160;
 
 const SHELL_FONT_STACKS: Record<ShellFontPreset, string> = {
   system: '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif',
@@ -837,6 +848,7 @@ const state = {
   defaultAppCandidateBusy: false,
   rightTool: "search" as RightTool,
   rightSidebarWidth: 420,
+  bottomResultsHeight: DEFAULT_BOTTOM_RESULTS_HEIGHT,
   explorerWidth: DEFAULT_EXPLORER_WIDTH,
   markdownPreviewWidth: 0,
   busyMessage: "",
@@ -887,6 +899,7 @@ let fileDropTask: Promise<void> = Promise.resolve();
 let openRequestsReady = false;
 let titlebarMaximizeToggleAt = 0;
 let rightSidebarResizeState: HorizontalResizeState | null = null;
+let bottomResultsResizeState: VerticalResizeState | null = null;
 let explorerResizeState: HorizontalResizeState | null = null;
 let markdownPreviewResizeState: HorizontalResizeState | null = null;
 let editorLayoutFrame = 0;
@@ -903,6 +916,8 @@ let currentFindHistoryActiveIndex = -1;
 let searchHistoryField: "find" | "replace" | null = null;
 let searchHistoryActiveIndex = -1;
 let searchResultRenderVersion = 0;
+let activeBottomResultTool: BottomResultTool = "search";
+let analyseResultsAvailable = false;
 let markdownEditor: MarkdownEditorBridge | null = null;
 let markdownModulePromise: Promise<typeof import("./markdownEditor")> | null = null;
 let markdownEditorDocumentId = 0;
@@ -1260,7 +1275,7 @@ function bootstrap() {
   activeSearchDecoration = editor.createDecorationsCollection();
   bookmarkDecorations = editor.createDecorationsCollection();
   analyseBookmarkDecorations = editor.createDecorationsCollection();
-  analysePanel = createAnalysePanel($("analyseToolPane"), {
+  analysePanel = createAnalysePanel($("analyseToolPane"), $("analyseResultHost"), {
     getDocument: () => {
       const doc = activeDocument();
       return {
@@ -1291,6 +1306,11 @@ function bootstrap() {
       if (lines.length > 0) analyseBookmarkLines.set(documentId, [...new Set(lines)].sort((a, b) => a - b));
       else analyseBookmarkLines.delete(documentId);
       renderAnalyseBookmarkDecorations();
+    },
+    setResultVisible: (visible) => {
+      analyseResultsAvailable = visible;
+      if (visible) openBottomResults("analyse");
+      else syncBottomResults();
     },
     getRecentProfilePaths: () => state.analyseRecentProfiles,
     rememberProfilePath: (path) => {
@@ -1326,6 +1346,7 @@ function bootstrap() {
   bindWindowCloseGuard();
   bindExplorerResize();
   bindRightSidebarResize();
+  bindBottomResultsResize();
   bindMarkdownPreviewResize();
   bindOutsideDismissal();
   setFindView("find", false);
@@ -1882,6 +1903,12 @@ function bindActions() {
     void openWorkspaceFind("workspace-find");
   });
   $("rightSidebarToggleButton").addEventListener("click", toggleRightSidebar);
+  document.querySelectorAll<HTMLButtonElement>("[data-bottom-result]").forEach((button) => {
+    button.addEventListener("click", () => {
+      openBottomResults(button.dataset.bottomResult as BottomResultTool);
+    });
+  });
+  $("closeBottomResultsButton").addEventListener("click", closeBottomResults);
   $("findCurrentButton").addEventListener("click", () => findCurrent(true));
   $("findNextButton").addEventListener("click", () => void findNextResult());
   $("findPreviousButton").addEventListener("click", () => void findPreviousResult());
@@ -3091,7 +3118,7 @@ function flushHorizontalResize(resize: HorizontalResizeState, clientX: number, a
 }
 
 function paneResizeActive() {
-  return Boolean(explorerResizeState || rightSidebarResizeState || markdownPreviewResizeState);
+  return Boolean(explorerResizeState || rightSidebarResizeState || bottomResultsResizeState || markdownPreviewResizeState);
 }
 
 function freezeEditorLayoutForPaneResize() {
@@ -3193,6 +3220,82 @@ function setRightSidebarWidth(
   $("app").style.setProperty("--right-sidebar-width", `${state.rightSidebarWidth}px`);
   if (!fast) positionOpenSearchHistoryMenu();
   if (!editorLayoutFrozen) requestEditorLayout(!fast);
+}
+
+function bindBottomResultsResize() {
+  const handle = $("bottomResultsResize");
+  const applyCurrentHeight = () => setBottomResultsHeight(state.bottomResultsHeight);
+  applyCurrentHeight();
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || $("bottomResultsDock").classList.contains("hidden")) return;
+    const dockRect = $("bottomResultsDock").getBoundingClientRect();
+    const resize: VerticalResizeState = {
+      pointerId: event.pointerId,
+      frameId: 0,
+      latestClientY: event.clientY,
+      anchorY: dockRect.bottom,
+      maxHeight: bottomResultsMaxHeight(),
+    };
+    bottomResultsResizeState = resize;
+    freezeEditorLayoutForPaneResize();
+    document.body.classList.add("resizing-results");
+    event.preventDefault();
+
+    const applyResize = (clientY: number) => {
+      setBottomResultsHeight(resize.anchorY - clientY, resize.maxHeight, true);
+    };
+    const moveResize = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== resize.pointerId) return;
+      resize.latestClientY = pointerEvent.clientY;
+      if (resize.frameId !== 0) return;
+      resize.frameId = window.requestAnimationFrame(() => {
+        resize.frameId = 0;
+        applyResize(resize.latestClientY);
+      });
+    };
+    const stopResize = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== resize.pointerId) return;
+      if (resize.frameId !== 0) window.cancelAnimationFrame(resize.frameId);
+      applyResize(pointerEvent.type === "pointerup" ? pointerEvent.clientY : resize.latestClientY);
+      bottomResultsResizeState = null;
+      document.body.classList.remove("resizing-results");
+      window.removeEventListener("pointermove", moveResize);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      releaseEditorLayoutAfterPaneResize();
+      analysePanel?.layout();
+      scheduleSessionSave();
+    };
+    window.addEventListener("pointermove", moveResize);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+  });
+  handle.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    setBottomResultsHeight(state.bottomResultsHeight + (event.key === "ArrowUp" ? 20 : -20));
+    scheduleSessionSave();
+  });
+  window.addEventListener("resize", applyCurrentHeight);
+}
+
+function bottomResultsMaxHeight() {
+  const compact = window.innerWidth <= 760 || window.innerHeight <= 760;
+  return Math.max(MIN_BOTTOM_RESULTS_HEIGHT, Math.floor(window.innerHeight * (compact ? 0.32 : 0.6)));
+}
+
+function setBottomResultsHeight(
+  height: number,
+  maxHeight = bottomResultsMaxHeight(),
+  fast = false,
+) {
+  state.bottomResultsHeight = Math.min(maxHeight, Math.max(MIN_BOTTOM_RESULTS_HEIGHT, Math.round(height)));
+  $("app").style.setProperty("--bottom-results-height", `${state.bottomResultsHeight}px`);
+  $("bottomResultsResize").setAttribute("aria-valuenow", String(state.bottomResultsHeight));
+  if (!fast && !editorLayoutFrozen) {
+    requestEditorLayout();
+    analysePanel?.layout();
+  }
 }
 
 function bindWindowCloseGuard() {
@@ -4589,7 +4692,7 @@ function setSearchResults(
   state.searchSignature = currentSearchSignature(scope);
   state.activeResultIndex = activeIndex;
   state.panel = "results";
-  if (scope === "workspace" || showPanel) {
+  if (scope === "workspace") {
     state.workspaceSearchVisibleResults = 400;
     state.rightTool = "search";
     $("findPopover").classList.remove("hidden");
@@ -4599,6 +4702,7 @@ function setSearchResults(
     renderRightSidebarToggle();
     scheduleSessionSave();
   }
+  if (scope !== "current" || showPanel) openBottomResults("search");
   renderSearchSidebarResults();
   renderCurrentFindCount();
   renderSearchDecorations();
@@ -5067,6 +5171,7 @@ function beginWorkspaceSearch(action: WorkspaceSearchAction, status: WorkspaceSe
   state.workspaceSearchAction = action;
   state.workspaceSearchStatus = status;
   state.workspaceSearchError = "";
+  openBottomResults("search");
   renderSearchSidebarResults();
   return state.workspaceSearchRequestId;
 }
@@ -6389,12 +6494,68 @@ function normalizeLineEndings(text: string, lineEnding: string) {
   return normalized;
 }
 
+function nativeResultsAvailable() {
+  return workspaceSearchIsBusy()
+    || state.workspaceSearchStatus === "error"
+    || state.results !== null
+    || state.replacePreview !== null;
+}
+
+function openBottomResults(tool: BottomResultTool) {
+  if (tool === "search" && !nativeResultsAvailable()) return;
+  if (tool === "analyse" && !analyseResultsAvailable) return;
+  activeBottomResultTool = tool;
+  $("bottomResultsDock").classList.remove("hidden");
+  $("app").classList.add("bottom-results-open");
+  setBottomResultsHeight(state.bottomResultsHeight);
+  syncBottomResults();
+  requestEditorLayout();
+  window.requestAnimationFrame(() => analysePanel?.layout());
+}
+
+function closeBottomResults() {
+  $("bottomResultsDock").classList.add("hidden");
+  $("app").classList.remove("bottom-results-open");
+  requestEditorLayout();
+  focusActiveEditor();
+}
+
+function syncBottomResults() {
+  const searchAvailable = nativeResultsAvailable();
+  const analyseAvailable = analyseResultsAvailable;
+  const searchTab = $<HTMLButtonElement>("bottomSearchResultsTab");
+  const analyseTab = $<HTMLButtonElement>("bottomAnalyseResultsTab");
+  searchTab.classList.toggle("hidden", !searchAvailable);
+  analyseTab.classList.toggle("hidden", !analyseAvailable);
+
+  if (!searchAvailable && !analyseAvailable) {
+    $("bottomResultsDock").classList.add("hidden");
+    $("app").classList.remove("bottom-results-open");
+    requestEditorLayout();
+    return;
+  }
+  if (activeBottomResultTool === "search" && !searchAvailable) activeBottomResultTool = "analyse";
+  if (activeBottomResultTool === "analyse" && !analyseAvailable) activeBottomResultTool = "search";
+
+  const searchActive = activeBottomResultTool === "search";
+  searchTab.classList.toggle("active", searchActive);
+  searchTab.setAttribute("aria-selected", String(searchActive));
+  analyseTab.classList.toggle("active", !searchActive);
+  analyseTab.setAttribute("aria-selected", String(!searchActive));
+  $("searchResultsPane").classList.toggle("hidden", !searchActive);
+  $("analyseResultHost").classList.toggle("hidden", searchActive);
+  if (!$("bottomResultsDock").classList.contains("hidden")) {
+    window.requestAnimationFrame(() => analysePanel?.layout());
+  }
+}
+
 function renderSearchSidebarResults() {
   const body = $("findResultsBody");
   const title = $("findResultsTitle");
   const summary = $("findResultsSummary");
   const renderVersion = ++searchResultRenderVersion;
   renderWorkspaceSearchControls();
+  syncBottomResults();
 
   const busy = workspaceSearchIsBusy();
   body.closest(".find-results-pane")?.setAttribute("aria-busy", String(busy));
@@ -7549,7 +7710,8 @@ function closeFind() {
 }
 
 function closeRightSidebar() {
-  if (workspaceSearchIsBusy()) {
+  const canceledWorkspaceSearch = workspaceSearchIsBusy();
+  if (canceledWorkspaceSearch) {
     state.workspaceSearchRequestId += 1;
     state.workspaceSearchStatus = "idle";
     state.workspaceSearchError = "";
@@ -7557,6 +7719,7 @@ function closeRightSidebar() {
   $("findPopover").classList.add("hidden");
   closeSearchHistory();
   $("app").classList.remove("right-sidebar-open");
+  if (canceledWorkspaceSearch) renderSearchSidebarResults();
   renderRightSidebarToggle();
   requestEditorLayout();
   focusActiveEditor();
@@ -8520,6 +8683,9 @@ async function restoreSession() {
       ? snapshot.rightTool
       : "search";
     state.rightSidebarWidth = snapshot.rightSidebarWidth ?? state.rightSidebarWidth;
+    state.bottomResultsHeight = Number.isFinite(snapshot.bottomResultsHeight)
+      ? snapshot.bottomResultsHeight ?? DEFAULT_BOTTOM_RESULTS_HEIGHT
+      : DEFAULT_BOTTOM_RESULTS_HEIGHT;
     state.explorerWidth = Number.isFinite(snapshot.explorerWidth)
       ? snapshot.explorerWidth ?? DEFAULT_EXPLORER_WIDTH
       : DEFAULT_EXPLORER_WIDTH;
@@ -8529,6 +8695,7 @@ async function restoreSession() {
     state.contextMenuEnabled = snapshot.contextMenuEnabled ?? true;
     state.defaultAppCandidateEnabled = snapshot.defaultAppCandidateEnabled ?? true;
     setRightSidebarWidth(state.rightSidebarWidth);
+    setBottomResultsHeight(state.bottomResultsHeight);
     applyExplorerWidth();
     applyMarkdownPreviewWidth();
     state.markdownEditMode = isMarkdownEditMode(snapshot.markdownEditMode)
@@ -8812,6 +8979,7 @@ async function saveSession() {
     rightSidebarOpen: !$("findPopover").classList.contains("hidden"),
     rightTool: state.rightTool,
     rightSidebarWidth: state.rightSidebarWidth,
+    bottomResultsHeight: state.bottomResultsHeight,
     explorerWidth: state.explorerWidth,
     markdownPreviewWidth: state.markdownPreviewWidth,
     treeScrollTop: $("tree").scrollTop,
