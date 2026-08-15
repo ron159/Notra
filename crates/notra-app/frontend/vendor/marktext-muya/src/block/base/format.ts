@@ -333,9 +333,20 @@ class Format extends Content {
 
     override blurHandler() {
         super.blurHandler();
-        const needRender = this.checkNeedRender();
+        const needRender
+            = this.parent?.blockName === 'atx-heading' || this.checkNeedRender();
         if (needRender)
             this.update();
+    }
+
+    override focusHandler() {
+        super.focusHandler();
+        if (this.parent?.blockName !== 'atx-heading')
+            return;
+
+        const cursor = this.getCursor();
+        if (cursor)
+            this.update({ ...cursor, block: this });
     }
 
     /**
@@ -724,7 +735,9 @@ class Format extends Content {
                 this._convertToTaskList();
                 break;
 
-            case !!atxHeading:
+            case !!atxHeading
+                && (this.parent?.blockName === 'atx-heading'
+                    || /(?:^|\n) {0,3}#{1,6}\s+/.test(text)):
                 this._convertToAtxHeading(atxHeading);
                 break;
 

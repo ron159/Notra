@@ -14,17 +14,19 @@ export default function header(
 ) {
     const { content } = token;
     const { start, end } = token.range;
-    const className = this.getClassName(
-        outerClass,
-        block,
-        {
-            range: {
-                start,
-                end: end - content.length,
-            },
-        } as BeginRuleToken,
-        cursor,
-    );
+    const className = cursor.block === block
+        ? CLASS_NAMES.MU_GRAY
+        : this.getClassName(
+                outerClass,
+                block,
+                {
+                    range: {
+                        start,
+                        end: end - content.length,
+                    },
+                } as BeginRuleToken,
+                cursor,
+            );
     const markerVnode = this.highlight(
         h,
         block,

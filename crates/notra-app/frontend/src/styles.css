@@ -2072,8 +2072,14 @@ html[data-markdown-width="full"] .markdown-preview {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
 }
 
-.mu-front-button[data-block-name="paragraph"] {
+.mu-front-button[data-block-name="paragraph"],
+.mu-front-button[data-block-name="atx-heading"],
+.mu-front-button[data-block-name="setext-heading"] {
   display: none;
+}
+
+.markdown-wysiwyg .mu-copy-header-link {
+  display: none !important;
 }
 
 body.current-find-open .mu-front-button-wrapper {

@@ -88,6 +88,22 @@ function typeHeading(muya: Muya, raw: string): void {
     );
 }
 
+async function typeCharacter(muya: Muya, character: string): Promise<void> {
+    const content = muya.editor.scrollPage!.firstContentInDescendant() as Content;
+    const raw = content.text + character;
+    muya.editor.activeContentBlock = content;
+    content.domNode!.textContent = raw;
+    content.setCursor(raw.length, raw.length);
+    content.inputHandler(
+        new InputEvent('input', {
+            bubbles: true,
+            data: character,
+            inputType: 'insertText',
+        }),
+    );
+    await flush();
+}
+
 function flush(): Promise<void> {
     return new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 }
@@ -97,6 +113,32 @@ function copyLinkAffordance(muya: Muya): HTMLElement | null {
 }
 
 describe('typing `#` to create a heading under a non-en locale (#4424 / #4427)', () => {
+    it('waits for the space before converting an ATX heading', async () => {
+        const muya = bootMuya('\n', zhCN);
+
+        await typeCharacter(muya, '#');
+        await typeCharacter(muya, '#');
+        expect(muya.getState()[0].name).toBe('paragraph');
+
+        await typeCharacter(muya, ' ');
+        await typeCharacter(muya, 'x');
+        expect(muya.getState()[0]).toMatchObject({
+            name: 'atx-heading',
+            meta: { level: 2 },
+            text: '## x',
+        });
+
+        const heading = muya.editor.scrollPage!.firstContentInDescendant() as Content;
+        expect(heading.domNode!.querySelector('.mu-gray')?.textContent).toBe('##');
+
+        muya.editor.activeContentBlock = null;
+        expect(heading.domNode!.querySelector('.mu-gray')).toBeNull();
+        expect(heading.domNode!.querySelector('.mu-hide')?.textContent).toBe('##');
+
+        heading.setCursor(heading.text.length, heading.text.length);
+        expect(heading.domNode!.querySelector('.mu-gray')?.textContent).toBe('##');
+    });
+
     it('does not throw when converting a paragraph to an ATX heading under zh-CN', async () => {
         const muya = bootMuya('\n', zhCN);
 
