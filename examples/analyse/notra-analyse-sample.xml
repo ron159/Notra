@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AnalyseDoc>
+  <SearchText orderNum="10" searchType="normal" matchCase="true" wholeWord="true"
+    select="line" bold="true" color="darkRed" bgColor="#FFE7E7"
+    comment="大写 ERROR：整行红色高亮，预期 2 次" group="severity">ERROR</SearchText>
+
+  <SearchText orderNum="20" searchType="normal" matchCase="true" wholeWord="true"
+    select="line" bold="true" color="orange" bgColor="#FFF4CC"
+    comment="大写 WARN：整行黄色高亮，预期 2 次" group="severity">WARN</SearchText>
+
+  <SearchText orderNum="30" searchType="normal" matchCase="false" wholeWord="true"
+    select="text" underlined="true" color="darkBlue" bgColor="veryLiteBlue"
+    comment="timeout：忽略大小写，仅高亮文本，预期 3 次" group="keywords">timeout</SearchText>
+
+  <SearchText orderNum="40" searchType="normal" matchCase="true" wholeWord="true"
+    select="text" bold="true" color="darkGreen" bgColor="#E8F5E9"
+    comment="disk：Whole Word，不能命中 diskette，预期 1 次" group="keywords">disk</SearchText>
+
+  <SearchText orderNum="50" searchType="regex" matchCase="true"
+    select="text" italic="true" color="purple" bgColor="offWhite"
+    comment="请求编号 Regex，预期 7 次">\bREQ-[0-9]{4}\b</SearchText>
+
+  <SearchText orderNum="60" searchType="regex" matchCase="true"
+    select="text" bold="true" color="deepPurple" bgColor="yellow"
+    comment="Lookbehind 提取 code 数字，预期 4 次">(?&lt;=code=)[0-9]{4}</SearchText>
+
+  <SearchText orderNum="70" searchType="escaped" matchCase="true"
+    select="text" underlined="true" color="blueGreen" bgColor="#E0FFF6"
+    comment="Extended 的反斜杠 t 匹配真实 Tab，预期 1 次">request-id:\tREQ-1002</SearchText>
+
+  <SearchText orderNum="80" searchType="rgx_multiline" matchCase="true"
+    select="line" italic="true" color="darkBlue" bgColor="veryLiteGrey"
+    comment="跨行事务块，点号可跨换行，预期 1 次" group="transaction">BEGIN TRANSACTION.*END TRANSACTION</SearchText>
+
+  <SearchText orderNum="90" doSearch="false" searchType="normal" matchCase="true"
+    select="line" color="grey" bgColor="white"
+    comment="禁用规则：文本中存在但不应命中" group="disabled">SHOULD_NOT_MATCH</SearchText>
+</AnalyseDoc>

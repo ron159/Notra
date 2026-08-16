@@ -1,0 +1,14 @@
+2026-08-15 09:00:00 INFO service=api status=started
+2026-08-15 09:00:01 WARN disk usage=82% node=alpha
+2026-08-15 09:00:02 ERROR code=5001 request-id: REQ-1001 message="Timeout while connecting"
+2026-08-15 09:00:03 error code=5002 request-id: REQ-1002 message="lowercase error is intentional"
+2026-08-15 09:00:04 ERROR code=5003 request-id:	REQ-1002 message="timeout retry scheduled"
+2026-08-15 09:00:05 INFO request=REQ-1003 result=accepted
+BEGIN TRANSACTION id=REQ-2001
+step=reserve result=ok
+step=charge result=failed code=9001
+END TRANSACTION id=REQ-2001
+2026-08-15 09:00:06 INFO diskette inventory=12
+2026-08-15 09:00:07 WARN retry request=REQ-3001 message="TIMEOUT after 30s"
+2026-08-15 09:00:08 DEBUG SHOULD_NOT_MATCH disabled-rule-check
+2026-08-15 09:00:09 INFO health=ok
