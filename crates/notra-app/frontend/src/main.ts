@@ -952,8 +952,6 @@ let searchHistoryField: "find" | "replace" | null = null;
 let searchHistoryActiveIndex = -1;
 let searchResultRenderVersion = 0;
 let editorWheelZoomAt = 0;
-let searchResultSideButtonAt = 0;
-let searchResultWheelAt = 0;
 let activeBottomResultTool: BottomResultTool = "search";
 let analyseResultsAvailable = false;
 let markdownEditor: MarkdownEditorBridge | null = null;
@@ -1964,9 +1962,7 @@ function bindActions() {
   });
   $("closeBottomResultsButton").addEventListener("click", closeBottomResults);
   $("editorArea").addEventListener("wheel", handleEditorWheelZoom, { passive: false });
-  $("bottomResultsDock").addEventListener("mousedown", handleSearchResultSideButton);
-  $("bottomResultsDock").addEventListener("auxclick", handleSearchResultSideButton);
-  $("bottomResultsDock").addEventListener("wheel", handleSearchResultHorizontalWheel, { passive: false });
+  $("findResultsBody").addEventListener("wheel", handleSearchResultHorizontalScroll, { passive: false });
   $("findCurrentButton").addEventListener("click", () => findCurrent(true));
   $("findNextButton").addEventListener("click", () => void findNextResult());
   $("findPreviousButton").addEventListener("click", () => void findPreviousResult());
@@ -4931,32 +4927,12 @@ function handleEditorWheelZoom(event: WheelEvent) {
   setFontSize(state.fontSize + (event.deltaY < 0 ? 1 : -1));
 }
 
-function searchResultPointerNavigationAvailable() {
-  return activeBottomResultTool === "search"
-    && !$("bottomResultsDock").classList.contains("hidden")
-    && Boolean(state.results?.total);
-}
-
-function handleSearchResultSideButton(event: MouseEvent) {
-  if (!searchResultPointerNavigationAvailable() || (event.button !== 3 && event.button !== 4)) return;
+function handleSearchResultHorizontalScroll(event: WheelEvent) {
+  const target = event.target instanceof Element ? event.target : null;
+  const resultList = target?.closest<HTMLElement>(".find-result-list");
+  if (!resultList || Math.abs(event.deltaX) < 1 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
   event.preventDefault();
-  const now = performance.now();
-  if (now - searchResultSideButtonAt < 120) return;
-  searchResultSideButtonAt = now;
-  void navigateSearchResult(event.button === 3 ? -searchDirection() : searchDirection());
-}
-
-function handleSearchResultHorizontalWheel(event: WheelEvent) {
-  if (
-    !searchResultPointerNavigationAvailable()
-    || Math.abs(event.deltaX) < 8
-    || Math.abs(event.deltaX) <= Math.abs(event.deltaY)
-  ) return;
-  event.preventDefault();
-  const now = performance.now();
-  if (now - searchResultWheelAt < 180) return;
-  searchResultWheelAt = now;
-  void navigateSearchResult(event.deltaX > 0 ? searchDirection() : -searchDirection());
+  resultList.scrollLeft += event.deltaX;
 }
 
 async function openSearchResult(index: number) {
@@ -6775,7 +6751,9 @@ function renderSearchSidebarResults() {
     const list = $("replacePreviewResultList");
     list.addEventListener("click", (event) => {
       const row = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-path]");
-      if (row) void openResult(row.dataset.path ?? "", Number(row.dataset.line ?? "1"), Number(row.dataset.column ?? "1"));
+      if (row && !mouseClickHasTextSelection(event, row)) {
+        void openResult(row.dataset.path ?? "", Number(row.dataset.line ?? "1"), Number(row.dataset.column ?? "1"));
+      }
     });
     renderProgressiveReplaceResults(state.replacePreview, list, replaceStatus, renderVersion);
     return;
@@ -6798,9 +6776,21 @@ function renderSearchSidebarResults() {
   const list = $("workspaceSearchResultList");
   list.addEventListener("click", (event) => {
     const row = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-result-index]");
-    if (row) void openSearchResult(Number(row.dataset.resultIndex ?? "0"));
+    if (row && !mouseClickHasTextSelection(event, row)) {
+      void openSearchResult(Number(row.dataset.resultIndex ?? "0"));
+    }
   });
   renderProgressiveSearchResults(state.results, list, renderVersion);
+}
+
+function mouseClickHasTextSelection(event: MouseEvent, row: HTMLElement) {
+  if (event.detail === 0) return false;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return false;
+  return Boolean(
+    (selection.anchorNode && row.contains(selection.anchorNode))
+    || (selection.focusNode && row.contains(selection.focusNode)),
+  );
 }
 
 function workspaceSearchIsBusy() {

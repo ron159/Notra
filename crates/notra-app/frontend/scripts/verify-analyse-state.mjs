@@ -12,11 +12,14 @@ assert.equal(resolveAnalyseEnterAction(true, true, "add"), "add");
 
 const panelSource = fs.readFileSync(new URL("../src/analysePanel.ts", import.meta.url), "utf8");
 const mainSource = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const stylesSource = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 assert.match(panelSource, /data-analyse-role="all-open-files"/);
 assert.match(panelSource, /sourceDocumentId = documentSnapshot\.id/);
 assert.match(panelSource, /--analyse-pattern-background/);
 assert.match(panelSource, /runButtonContent\(running\)/);
 assert.match(mainSource, /getDocuments: \(\) => state\.documents\.map/);
+assert.match(stylesSource, /button\.analyse-run-button\.primary:hover:not\(:disabled\)[^{]*\{[^}]*color: var\(--surface\);[^}]*background: var\(--text\);/s);
+assert.match(stylesSource, /\.analyse-result-editor \.monaco-editor \.selected-text[^{]*\{[^}]*background: rgba\(107, 114, 128, 0\.54\) !important;[^}]*box-shadow:/s);
 
 console.log("Analyse state and multi-document UI checks passed.");

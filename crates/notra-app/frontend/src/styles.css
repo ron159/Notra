@@ -100,10 +100,10 @@
   background: var(--primary);
 }
 
-.analyse-panel button.primary:hover:not(:disabled) {
-  color: #fff;
-  border-color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 88%, #000);
+.analyse-panel button.analyse-run-button.primary:hover:not(:disabled) {
+  color: var(--surface);
+  border-color: var(--text);
+  background: var(--text);
 }
 
 .analyse-run-button {
@@ -430,6 +430,17 @@
 .analyse-result-editor {
   min-width: 0;
   min-height: 0;
+}
+
+.analyse-result-editor .monaco-editor .selected-text {
+  background: rgba(107, 114, 128, 0.54) !important;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.78),
+    inset 0 -1px rgba(15, 23, 42, 0.82);
+}
+
+.analyse-result-editor .monaco-editor:not(.focused) .selected-text {
+  background: rgba(107, 114, 128, 0.42) !important;
 }
 
 .analyse-status {
@@ -5527,6 +5538,12 @@ tbody tr.result-active {
   padding: 0;
 }
 
+.find-results-body:has(> .find-result-list) {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
 .find-result-actions {
   min-height: 36px;
   align-items: center;
@@ -5542,10 +5559,32 @@ tbody tr.result-active {
 }
 
 .find-result-list {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--text-3) var(--surface-2);
+  scrollbar-gutter: stable;
   gap: 0;
 }
 
+.find-result-list::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.find-result-list::-webkit-scrollbar-track {
+  background: var(--surface-2);
+}
+
+.find-result-list::-webkit-scrollbar-thumb {
+  border: 2px solid var(--surface-2);
+  border-radius: 999px;
+  background: var(--text-3);
+}
+
 .find-result-group {
+  width: max-content;
+  min-width: 100%;
   border-bottom: 1px solid var(--line-soft);
 }
 
@@ -5580,13 +5619,16 @@ tbody tr.result-active {
 }
 
 .find-result-row {
-  grid-template-columns: 48px minmax(0, 1fr);
+  width: max-content;
+  min-width: 100%;
+  grid-template-columns: 48px max-content;
   align-items: center;
   gap: 6px;
   min-height: 30px;
   padding: 4px 12px;
   border: 0;
   border-radius: 0;
+  user-select: text;
 }
 
 .find-result-row:hover {
@@ -5602,13 +5644,18 @@ tbody tr.result-active {
 
 .find-result-line {
   color: var(--text-3);
+  cursor: text;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
 .find-result-preview {
+  overflow: visible;
+  cursor: text;
   font-family: var(--editor-font);
   font-size: 11px;
+  text-overflow: clip;
+  white-space: pre;
 }
 
 .outline-row {
