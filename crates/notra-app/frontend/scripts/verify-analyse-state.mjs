@@ -20,6 +20,10 @@ assert.match(panelSource, /--analyse-pattern-background/);
 assert.match(panelSource, /runButtonContent\(running\)/);
 assert.match(mainSource, /getDocuments: \(\) => state\.documents\.map/);
 assert.match(stylesSource, /button\.analyse-run-button\.primary:hover:not\(:disabled\)[^{]*\{[^}]*color: var\(--surface\);[^}]*background: var\(--text\);/s);
-assert.match(stylesSource, /\.analyse-result-editor \.monaco-editor \.selected-text[^{]*\{[^}]*background: rgba\(107, 114, 128, 0\.54\) !important;[^}]*box-shadow:/s);
+assert.match(panelSource, /element\("result-editor"\)\.addEventListener\("wheel", handleResultWheelZoom/);
+assert.match(panelSource, /setResultFontSize\(currentFontSize \+ \(event\.deltaY < 0 \? 1 : -1\)\)/);
+assert.match(panelSource, /resultSelectionDecorations\.set\(selections\.map/);
+assert.match(stylesSource, /\.analyse-result-editor \.monaco-editor \.selected-text[^{]*\{[^}]*background: #2563eb !important;[^}]*box-shadow:/s);
+assert.match(stylesSource, /span\.analyse-result-selected-text[^{]*\{[^}]*color: #fff !important;[^}]*background: #2563eb !important;/s);
 
 console.log("Analyse state and multi-document UI checks passed.");

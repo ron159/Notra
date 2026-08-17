@@ -185,6 +185,7 @@ export function createAnalysePanel(
   let resultFindSignature = "";
   let syncingFromSource = false;
   let syncingFromResult = false;
+  let resultWheelZoomAt = 0;
 
   const resultModel = monaco.editor.createModel(
     "",
@@ -211,6 +212,14 @@ export function createAnalysePanel(
   });
   const resultDecorations = resultEditor.createDecorationsCollection();
   const resultFindDecorations = resultEditor.createDecorationsCollection();
+  const resultSelectionDecorations = resultEditor.createDecorationsCollection();
+  resultEditor.onDidChangeCursorSelection(() => {
+    const selections = resultEditor.getSelections()?.filter((selection) => !selection.isEmpty()) ?? [];
+    resultSelectionDecorations.set(selections.map((selection) => ({
+      range: selection,
+      options: { inlineClassName: "analyse-result-selected-text" },
+    })));
+  });
   const styleElement = document.createElement("style");
   styleElement.dataset.analyseStyles = "true";
   resultContainer.appendChild(styleElement);
@@ -286,10 +295,11 @@ export function createAnalysePanel(
       persistSettings();
     });
     element("result-font").addEventListener("change", () => {
-      const fontSize = Math.min(24, Math.max(10, Number(input("result-font").value) || 12));
-      input("result-font").value = String(fontSize);
-      resultEditor.updateOptions({ fontSize, lineHeight: Math.round(fontSize * 1.6) });
-      persistSettings();
+      setResultFontSize(Number(input("result-font").value) || 12);
+    });
+    element("result-editor").addEventListener("wheel", handleResultWheelZoom, {
+      capture: true,
+      passive: false,
     });
     element("pattern-list").addEventListener("click", (event) => {
       const row = (event.target as HTMLElement).closest<HTMLElement>("[data-pattern-id]");
@@ -349,6 +359,24 @@ export function createAnalysePanel(
       host.revealSource(mapping.sourceDocumentId, mapping.sourceLine);
       queueMicrotask(() => { syncingFromResult = false; });
     });
+  }
+
+  function handleResultWheelZoom(event: WheelEvent) {
+    if (!event.ctrlKey || event.deltaY === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const now = performance.now();
+    if (resultWheelZoomAt !== 0 && now - resultWheelZoomAt < 55) return;
+    resultWheelZoomAt = now;
+    const currentFontSize = Number(input("result-font").value) || 12;
+    setResultFontSize(currentFontSize + (event.deltaY < 0 ? 1 : -1));
+  }
+
+  function setResultFontSize(value: number) {
+    const fontSize = Math.min(24, Math.max(10, value));
+    input("result-font").value = String(fontSize);
+    resultEditor.updateOptions({ fontSize, lineHeight: Math.round(fontSize * 1.6) });
+    persistSettings();
   }
 
   function input(role: string) {
