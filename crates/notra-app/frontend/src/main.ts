@@ -305,6 +305,7 @@ interface SessionSnapshot {
   activePath: string | null;
   activeDraftId: string | null;
   darkMode: boolean;
+  themeOverrides?: ThemeOverrides;
   contextMenuEnabled?: boolean;
   defaultAppCandidateEnabled?: boolean;
   rightSidebarOpen: boolean;
@@ -439,6 +440,10 @@ type SearchScope = "current" | "open" | "workspace";
 type WorkspaceSearchStatus = "idle" | "searching" | "previewing" | "applying" | "error";
 type WorkspaceSearchAction = "search" | "preview" | "apply";
 type RenderWhitespaceMode = "none" | "selection" | "all";
+type ThemeMode = "light" | "dark";
+type ThemeColorKey = "background" | "surface" | "input" | "editor" | "text" | "accent";
+type ThemePalette = Record<ThemeColorKey, string>;
+type ThemeOverrides = Record<ThemeMode, Partial<ThemePalette>>;
 type SettingsSection = "appearance" | "editor" | "keybindings" | "workspace" | "system" | "search" | "about";
 type AppUpdateStatus = "idle" | "checking" | "latest" | "available" | "installing" | "failed" | "unsupported";
 type HorizontalResizeState = {
@@ -728,6 +733,34 @@ const EXPLORER_RESIZE_WIDTH = 6;
 const DEFAULT_BOTTOM_RESULTS_HEIGHT = 280;
 const MIN_BOTTOM_RESULTS_HEIGHT = 160;
 
+const DEFAULT_THEME_PALETTES: Record<ThemeMode, ThemePalette> = {
+  light: {
+    background: "#E8EEF6",
+    surface: "#FFFFFF",
+    input: "#F5F8FC",
+    editor: "#FFFFFF",
+    text: "#111827",
+    accent: "#3238D8",
+  },
+  dark: {
+    background: "#121722",
+    surface: "#1D2431",
+    input: "#202838",
+    editor: "#151B26",
+    text: "#EDF2FB",
+    accent: "#858BFF",
+  },
+};
+
+const THEME_COLOR_CONTROLS: Record<ThemeColorKey, string> = {
+  background: "settingsThemeBackground",
+  surface: "settingsThemeSurface",
+  input: "settingsThemeInput",
+  editor: "settingsThemeEditor",
+  text: "settingsThemeText",
+  accent: "settingsThemeAccent",
+};
+
 const SHELL_FONT_STACKS: Record<ShellFontPreset, string> = {
   system: '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif',
   segoe: '"Segoe UI Variable Text", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
@@ -769,6 +802,7 @@ const EDITOR_FONT_LABELS: Record<EditorFontPreset, string> = {
 
 const DEFAULT_ANALYSE_SETTINGS: AnalysePanelSettings = {
   autoUpdate: false,
+  searchAllOpenFiles: false,
   showLineNumbers: true,
   wordWrap: false,
   fontSize: 12,
@@ -795,6 +829,7 @@ const state = {
   markdownEditMode: "wysiwyg" as MarkdownEditMode,
   markdownContentWidth: "typora" as MarkdownContentWidth,
   darkMode: false,
+  themeOverrides: { light: {}, dark: {} } as ThemeOverrides,
   panel: "results" as "results" | "preview" | "logs",
   logs: [] as string[],
   results: null as SearchReportDto | null,
@@ -916,6 +951,9 @@ let currentFindHistoryActiveIndex = -1;
 let searchHistoryField: "find" | "replace" | null = null;
 let searchHistoryActiveIndex = -1;
 let searchResultRenderVersion = 0;
+let editorWheelZoomAt = 0;
+let searchResultSideButtonAt = 0;
+let searchResultWheelAt = 0;
 let activeBottomResultTool: BottomResultTool = "search";
 let analyseResultsAvailable = false;
 let markdownEditor: MarkdownEditorBridge | null = null;
@@ -1199,6 +1237,7 @@ function bootstrap() {
   registerToml();
   registerCompletionProviders();
   registerFormattingProviders();
+  applyThemePalette();
   defineThemes();
   renderIconSlots();
 
@@ -1276,6 +1315,7 @@ function bootstrap() {
   bookmarkDecorations = editor.createDecorationsCollection();
   analyseBookmarkDecorations = editor.createDecorationsCollection();
   analysePanel = createAnalysePanel($("analyseToolPane"), $("analyseResultHost"), {
+    getActiveDocumentId: () => state.activeId,
     getDocument: () => {
       const doc = activeDocument();
       return {
@@ -1289,6 +1329,20 @@ function bootstrap() {
         largeFile: doc.largeFile,
       };
     },
+    getDocuments: () => state.documents.map((doc) => ({
+      id: doc.id,
+      revision: doc.model.getVersionId(),
+      text: doc.model.getValue(),
+      title: doc.title,
+      path: doc.path ?? null,
+      fileSize: doc.fileSize,
+      dirty: doc.dirty,
+      largeFile: doc.largeFile,
+    })),
+    getDocumentRevisions: () => state.documents.map((doc) => ({
+      id: doc.id,
+      revision: doc.model.getVersionId(),
+    })),
     getSelectedText: selectedSourceTextForAnalyse,
     getSourceLine: () => editor.getPosition()?.lineNumber ?? 1,
     navigate: (documentId, line) => {
@@ -1909,6 +1963,10 @@ function bindActions() {
     });
   });
   $("closeBottomResultsButton").addEventListener("click", closeBottomResults);
+  $("editorArea").addEventListener("wheel", handleEditorWheelZoom, { passive: false });
+  $("bottomResultsDock").addEventListener("mousedown", handleSearchResultSideButton);
+  $("bottomResultsDock").addEventListener("auxclick", handleSearchResultSideButton);
+  $("bottomResultsDock").addEventListener("wheel", handleSearchResultHorizontalWheel, { passive: false });
   $("findCurrentButton").addEventListener("click", () => findCurrent(true));
   $("findNextButton").addEventListener("click", () => void findNextResult());
   $("findPreviousButton").addEventListener("click", () => void findPreviousResult());
@@ -2003,6 +2061,12 @@ function bindActions() {
   });
   $("settingsThemeLight").addEventListener("click", () => setThemeMode(false));
   $("settingsThemeDark").addEventListener("click", () => setThemeMode(true));
+  for (const [key, id] of Object.entries(THEME_COLOR_CONTROLS) as Array<[ThemeColorKey, string]>) {
+    $<HTMLInputElement>(id).addEventListener("input", (event) => {
+      setThemeColor(key, (event.currentTarget as HTMLInputElement).value);
+    });
+  }
+  $("settingsThemeColorsReset").addEventListener("click", resetCurrentThemeColors);
   $("settingsShellFontMinus").addEventListener("click", () => setShellFontSize(state.shellFontSize - 1));
   $("settingsShellFontPlus").addEventListener("click", () => setShellFontSize(state.shellFontSize + 1));
   $("settingsFontMinus").addEventListener("click", () => setFontSize(state.fontSize - 1));
@@ -2869,10 +2933,40 @@ function bindOpenRequestListener() {
 function setThemeMode(darkMode: boolean) {
   state.darkMode = darkMode;
   document.body.classList.toggle("dark", state.darkMode);
+  applyThemePalette();
+  defineThemes();
   monaco.editor.setTheme(state.darkMode ? "notra-dark" : "notra-light");
   markdownEditor?.updateAppearance(state.darkMode, state.fontSize, resolveEditorFontStack());
   if (isMarkdownPreviewEnabled()) void renderMarkdownPreview();
   setThemeButton();
+  renderSettingsMenu();
+  scheduleSessionSave();
+}
+
+function setThemeColor(key: ThemeColorKey, value: string) {
+  const normalized = normalizeThemeColor(value);
+  if (!normalized) return;
+  const mode = currentThemeMode();
+  state.themeOverrides[mode] = {
+    ...state.themeOverrides[mode],
+    [key]: normalized,
+  };
+  applyThemePalette();
+  defineThemes();
+  monaco.editor.setTheme(state.darkMode ? "notra-dark" : "notra-light");
+  markdownEditor?.updateAppearance(state.darkMode, state.fontSize, resolveEditorFontStack());
+  if (isMarkdownPreviewEnabled()) void renderMarkdownPreview();
+  renderSettingsMenu();
+  scheduleSessionSave();
+}
+
+function resetCurrentThemeColors() {
+  state.themeOverrides[currentThemeMode()] = {};
+  applyThemePalette();
+  defineThemes();
+  monaco.editor.setTheme(state.darkMode ? "notra-dark" : "notra-light");
+  markdownEditor?.updateAppearance(state.darkMode, state.fontSize, resolveEditorFontStack());
+  if (isMarkdownPreviewEnabled()) void renderMarkdownPreview();
   renderSettingsMenu();
   scheduleSessionSave();
 }
@@ -3501,7 +3595,7 @@ function createDocument(
     renderMarkdownOutline();
     scheduleMarkdownPreviewRender();
     if (doc.id === state.activeId) scheduleMarkdownEditorSync(doc);
-    if (doc.id === state.activeId) analysePanel?.notifyDocumentChanged(doc.id);
+    analysePanel?.notifyDocumentChanged(doc.id);
     scheduleSessionSave();
   });
   return doc;
@@ -4828,6 +4922,43 @@ async function navigateSearchResult(delta: number) {
   await openSearchResult(nextIndex);
 }
 
+function handleEditorWheelZoom(event: WheelEvent) {
+  if (!event.ctrlKey || event.deltaY === 0) return;
+  event.preventDefault();
+  const now = performance.now();
+  if (now - editorWheelZoomAt < 55) return;
+  editorWheelZoomAt = now;
+  setFontSize(state.fontSize + (event.deltaY < 0 ? 1 : -1));
+}
+
+function searchResultPointerNavigationAvailable() {
+  return activeBottomResultTool === "search"
+    && !$("bottomResultsDock").classList.contains("hidden")
+    && Boolean(state.results?.total);
+}
+
+function handleSearchResultSideButton(event: MouseEvent) {
+  if (!searchResultPointerNavigationAvailable() || (event.button !== 3 && event.button !== 4)) return;
+  event.preventDefault();
+  const now = performance.now();
+  if (now - searchResultSideButtonAt < 120) return;
+  searchResultSideButtonAt = now;
+  void navigateSearchResult(event.button === 3 ? -searchDirection() : searchDirection());
+}
+
+function handleSearchResultHorizontalWheel(event: WheelEvent) {
+  if (
+    !searchResultPointerNavigationAvailable()
+    || Math.abs(event.deltaX) < 8
+    || Math.abs(event.deltaX) <= Math.abs(event.deltaY)
+  ) return;
+  event.preventDefault();
+  const now = performance.now();
+  if (now - searchResultWheelAt < 180) return;
+  searchResultWheelAt = now;
+  void navigateSearchResult(event.deltaX > 0 ? searchDirection() : -searchDirection());
+}
+
 async function openSearchResult(index: number) {
   const items = flattenSearchResults();
   if (items.length === 0) return;
@@ -5423,6 +5554,44 @@ function clearSearchReplaceHistory() {
   scheduleSessionSave();
 }
 
+function currentThemeMode(): ThemeMode {
+  return state.darkMode ? "dark" : "light";
+}
+
+function resolvedThemePalette(mode: ThemeMode): ThemePalette {
+  return { ...DEFAULT_THEME_PALETTES[mode], ...state.themeOverrides[mode] };
+}
+
+function applyThemePalette() {
+  const palette = resolvedThemePalette(currentThemeMode());
+  const style = document.body.style;
+  style.setProperty("--bg", palette.background);
+  style.setProperty("--surface", palette.surface);
+  style.setProperty("--input-surface", palette.input);
+  style.setProperty("--editor", palette.editor);
+  style.setProperty("--text", palette.text);
+  style.setProperty("--primary", palette.accent);
+}
+
+function normalizeThemeColor(value: unknown): string | null {
+  if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) return null;
+  return value.toUpperCase();
+}
+
+function normalizeThemeOverrides(value: unknown): ThemeOverrides {
+  const normalized: ThemeOverrides = { light: {}, dark: {} };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return normalized;
+  for (const mode of ["light", "dark"] as const) {
+    const source = (value as Partial<Record<ThemeMode, unknown>>)[mode];
+    if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+    for (const key of Object.keys(DEFAULT_THEME_PALETTES[mode]) as ThemeColorKey[]) {
+      const color = normalizeThemeColor((source as Partial<ThemePalette>)[key]);
+      if (color) normalized[mode][key] = color;
+    }
+  }
+  return normalized;
+}
+
 function applyShellFontSettings() {
   const shellFont = resolveShellFontStack();
   const shellFontSize = `${state.shellFontSize}px`;
@@ -5973,6 +6142,10 @@ function renderSettingsMenu() {
   });
   $("settingsThemeLight").classList.toggle("active", !state.darkMode);
   $("settingsThemeDark").classList.toggle("active", state.darkMode);
+  const palette = resolvedThemePalette(currentThemeMode());
+  for (const [key, id] of Object.entries(THEME_COLOR_CONTROLS) as Array<[ThemeColorKey, string]>) {
+    $<HTMLInputElement>(id).value = palette[key];
+  }
   $("settingsShellFontValue").textContent = `${state.shellFontSize} px`;
   $("settingsFontValue").textContent = `${state.fontSize} px`;
   setFontDropdownLabel("settingsShellFontModeLabel", FONT_MODE_LABELS[state.shellFontMode]);
@@ -8657,6 +8830,8 @@ async function restoreSession() {
     analysePanel?.syncRecentProfiles();
     state.analyseSettings = {
       autoUpdate: snapshot.analyseSettings?.autoUpdate ?? DEFAULT_ANALYSE_SETTINGS.autoUpdate,
+      searchAllOpenFiles: snapshot.analyseSettings?.searchAllOpenFiles
+        ?? DEFAULT_ANALYSE_SETTINGS.searchAllOpenFiles,
       showLineNumbers: snapshot.analyseSettings?.showLineNumbers ?? DEFAULT_ANALYSE_SETTINGS.showLineNumbers,
       wordWrap: snapshot.analyseSettings?.wordWrap ?? DEFAULT_ANALYSE_SETTINGS.wordWrap,
       fontSize: Math.min(24, Math.max(10, Number(snapshot.analyseSettings?.fontSize) || DEFAULT_ANALYSE_SETTINGS.fontSize)),
@@ -8711,6 +8886,7 @@ async function restoreSession() {
     state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
     state.renderWhitespace = snapshot.renderWhitespace ?? state.renderWhitespace;
     state.fontSize = snapshot.fontSize ?? state.fontSize;
+    state.themeOverrides = normalizeThemeOverrides(snapshot.themeOverrides);
     state.shellFontMode = normalizeFontMode(snapshot.shellFontMode, state.shellFontMode);
     state.shellFontPreset = isShellFontPreset(snapshot.shellFontPreset) ? snapshot.shellFontPreset : state.shellFontPreset;
     state.shellFontCustom = normalizeFontStack(snapshot.shellFontCustom, state.shellFontCustom);
@@ -8728,12 +8904,12 @@ async function restoreSession() {
     applySearchSnapshot(snapshot);
     setFindView(state.findView, false);
 
-    if (snapshot.darkMode) {
-      state.darkMode = true;
-      document.body.classList.add("dark");
-      monaco.editor.setTheme("notra-dark");
-      setThemeButton();
-    }
+    state.darkMode = Boolean(snapshot.darkMode);
+    document.body.classList.toggle("dark", state.darkMode);
+    applyThemePalette();
+    defineThemes();
+    monaco.editor.setTheme(state.darkMode ? "notra-dark" : "notra-light");
+    setThemeButton();
 
     if (snapshot.workspaceRoot) {
       try {
@@ -8974,6 +9150,7 @@ async function saveSession() {
     activePath: active?.path ?? null,
     activeDraftId: active && !active.path ? ensureDraftId(active) : null,
     darkMode: state.darkMode,
+    themeOverrides: state.themeOverrides,
     contextMenuEnabled: state.contextMenuEnabled,
     defaultAppCandidateEnabled: state.defaultAppCandidateEnabled,
     rightSidebarOpen: !$("findPopover").classList.contains("hidden"),
@@ -9176,32 +9353,34 @@ function ensureSqlFormatterWorker() {
 }
 
 function defineThemes() {
+  const light = resolvedThemePalette("light");
+  const dark = resolvedThemePalette("dark");
   monaco.editor.defineTheme("notra-light", {
     base: "vs",
     inherit: true,
     rules: [
       { token: "comment", foreground: "8390a3" },
-      { token: "keyword", foreground: "3238d8", fontStyle: "bold" },
-      { token: "identifier", foreground: "111827" },
+      { token: "keyword", foreground: light.accent.slice(1), fontStyle: "bold" },
+      { token: "identifier", foreground: light.text.slice(1) },
       { token: "string", foreground: "0f8a5f" },
       { token: "string.key.json", foreground: "1d4ed8" },
       { token: "string.value.json", foreground: "0f8a5f" },
       { token: "number", foreground: "b45309" },
       { token: "type.identifier", foreground: "0f766e" },
       { token: "function", foreground: "7c3aed" },
-      { token: "variable", foreground: "0f172a" },
+      { token: "variable", foreground: light.text.slice(1) },
       { token: "tag", foreground: "1d4ed8" },
       { token: "attribute.name", foreground: "7c3aed" },
       { token: "delimiter", foreground: "64748b" },
       { token: "delimiter.bracket.json", foreground: "3238d8" },
     ],
     colors: {
-      "editor.background": "#ffffff",
-      "editor.foreground": "#111827",
-      "editorGutter.background": "#f5f8fc",
+      "editor.background": light.editor,
+      "editor.foreground": light.text,
+      "editorGutter.background": light.surface,
       "editorLineNumber.foreground": "#8b97a8",
-      "editorLineNumber.activeForeground": "#3238d8",
-      "editorCursor.foreground": "#3238d8",
+      "editorLineNumber.activeForeground": light.accent,
+      "editorCursor.foreground": light.accent,
       "editor.selectionBackground": "#dfe4ff",
       "editor.inactiveSelectionBackground": "#e8edf5",
       "editor.selectionHighlightBackground": "#add6ff66",
@@ -9226,27 +9405,27 @@ function defineThemes() {
     inherit: true,
     rules: [
       { token: "comment", foreground: "93a0b4" },
-      { token: "keyword", foreground: "858bff", fontStyle: "bold" },
-      { token: "identifier", foreground: "e5e7eb" },
+      { token: "keyword", foreground: dark.accent.slice(1), fontStyle: "bold" },
+      { token: "identifier", foreground: dark.text.slice(1) },
       { token: "string", foreground: "6ee7b7" },
       { token: "string.key.json", foreground: "93c5fd" },
       { token: "string.value.json", foreground: "6ee7b7" },
       { token: "number", foreground: "fbbf24" },
       { token: "type.identifier", foreground: "5eead4" },
       { token: "function", foreground: "c4b5fd" },
-      { token: "variable", foreground: "e5e7eb" },
+      { token: "variable", foreground: dark.text.slice(1) },
       { token: "tag", foreground: "93c5fd" },
       { token: "attribute.name", foreground: "c4b5fd" },
       { token: "delimiter", foreground: "94a3b8" },
       { token: "delimiter.bracket.json", foreground: "858bff" },
     ],
     colors: {
-      "editor.background": "#151b26",
-      "editor.foreground": "#edf2fb",
-      "editorGutter.background": "#1d2431",
+      "editor.background": dark.editor,
+      "editor.foreground": dark.text,
+      "editorGutter.background": dark.surface,
       "editorLineNumber.foreground": "#667085",
-      "editorLineNumber.activeForeground": "#858bff",
-      "editorCursor.foreground": "#858bff",
+      "editorLineNumber.activeForeground": dark.accent,
+      "editorCursor.foreground": dark.accent,
       "editor.selectionBackground": "#313766",
       "editor.inactiveSelectionBackground": "#2a3140",
       "editor.selectionHighlightBackground": "#264f7866",

@@ -53,6 +53,18 @@ if (
 if (!mainSource.includes('if (scope !== "current" || showPanel) openBottomResults("search")')) {
   failures.push("当前文件全部查找没有打开底部结果面板");
 }
+if (!mainSource.includes('$("editorArea").addEventListener("wheel", handleEditorWheelZoom')) {
+  failures.push("编辑页面没有注册 Ctrl+滚轮字号缩放");
+}
+if (
+  !mainSource.includes('$("bottomResultsDock").addEventListener("mousedown", handleSearchResultSideButton)')
+  || !mainSource.includes('$("bottomResultsDock").addEventListener("wheel", handleSearchResultHorizontalWheel')
+) {
+  failures.push("普通搜索结果没有注册鼠标侧键和横向滚轮导航");
+}
+if (!htmlSource.includes('id="settingsThemeInput"') || !htmlSource.includes('id="settingsThemeEditor"')) {
+  failures.push("主题设置缺少文本框或编辑区独立背景色");
+}
 if (!htmlSource.includes('id="bottomResultsDock"') || !htmlSource.includes('id="searchResultsPane"')) {
   failures.push("原生搜索结果没有挂载到底部结果区域");
 }

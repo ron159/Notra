@@ -11,6 +11,7 @@ export type AnalyseProfileLoadMode = "replace" | "append" | "prepend";
 
 export interface AnalysePanelSettings {
   autoUpdate: boolean;
+  searchAllOpenFiles: boolean;
   showLineNumbers: boolean;
   wordWrap: boolean;
   fontSize: number;
@@ -32,7 +33,10 @@ export interface AnalyseDocumentSnapshot {
 }
 
 export interface AnalysePanelHost {
+  getActiveDocumentId: () => number;
   getDocument: () => AnalyseDocumentSnapshot;
+  getDocuments: () => AnalyseDocumentSnapshot[];
+  getDocumentRevisions: () => Array<{ id: number; revision: number }>;
   getSelectedText: () => string;
   getSourceLine: () => number;
   navigate: (documentId: number, line: number) => void;
@@ -95,6 +99,7 @@ interface AnalyseRunResponse {
   patternErrors: Array<{ patternId: number; kind: string; message: string }>;
   totalLines: number;
   resultToken?: string | null;
+  documentCount?: number;
 }
 
 interface AnalyseResultChunk {
@@ -108,6 +113,8 @@ interface AnalyseLine {
   text: string;
   matchingPatternIds: number[];
   styledSegments: StyledSegment[];
+  sourceDocumentId?: number;
+  sourceDocumentTitle?: string;
 }
 
 interface StyledSegment {
@@ -126,6 +133,7 @@ interface ResultLineMapping {
   resultLine: number;
   sourceDocumentId: number;
   sourceLine: number;
+  sourceDocumentTitle: string;
   matchingPatternIds: number[];
 }
 
@@ -165,7 +173,7 @@ export function createAnalysePanel(
   let nextPatternId = 1;
   let patternRevision = 0;
   let nextRunId = 0;
-  let resultDocumentId: number | null = null;
+  const resultDocumentIds = new Set<number>();
   let latestResult: AnalyseRunResponse | null = null;
   let resultMapping: ResultLineMapping[] = [];
   let currentProfilePath: string | null = null;
@@ -246,6 +254,11 @@ export function createAnalysePanel(
     element("auto-update").addEventListener("change", () => {
       persistSettings();
       scheduleAutoRun();
+    });
+    element("all-open-files").addEventListener("change", () => {
+      persistSettings();
+      invalidateResult();
+      setStatus(input("all-open-files").checked ? "已切换为分析全部打开文件" : "已切换为分析当前文档");
     });
     element("scroll-sync").addEventListener("change", () => {
       persistSettings();
@@ -572,6 +585,8 @@ export function createAnalysePanel(
       row.dataset.patternId = String(pattern.id);
       row.classList.toggle("selected", pattern.id === selectedPatternId);
       row.classList.toggle("disabled", !pattern.enabled);
+      row.style.setProperty("--analyse-pattern-foreground", pattern.foreground);
+      row.style.setProperty("--analyse-pattern-background", pattern.background);
       const error = errors.get(pattern.id);
       const values = [
         pattern.enabled ? "●" : "○",
@@ -694,56 +709,129 @@ export function createAnalysePanel(
       setStatus("请先添加至少一个 Pattern", true);
       return;
     }
-    const documentSnapshot = host.getDocument();
+    const searchAllOpenFiles = input("all-open-files").checked;
+    const documentSnapshots = searchAllOpenFiles ? host.getDocuments() : [host.getDocument()];
+    if (documentSnapshots.length === 0) {
+      clearResult();
+      setStatus("没有可分析的打开文件", true);
+      return;
+    }
     if (activeRunId !== null) cancelActiveRun(false);
     const runId = ++nextRunId;
     activeRunId = runId;
     const requestedPatternRevision = patternRevision;
     setRunning(true);
-    setStatus(`正在分析 ${documentSnapshot.title}…`);
+    setStatus(searchAllOpenFiles
+      ? `正在分析 ${documentSnapshots.length} 个打开文件…`
+      : `正在分析 ${documentSnapshots[0].title}…`);
     try {
-      const commonRequest = {
+      const firstDocument = documentSnapshots[0];
+      const combined: AnalyseRunResponse = {
         runId,
-        documentId: documentSnapshot.id,
-        documentRevision: documentSnapshot.revision,
+        documentId: firstDocument.id,
+        documentRevision: firstDocument.revision,
         patternRevision: requestedPatternRevision,
-        patterns,
+        lines: [],
+        totalMatches: 0,
+        patternHits: [],
+        patternErrors: [],
+        totalLines: 0,
       };
-      const usePath = documentSnapshot.largeFile
-        && !documentSnapshot.dirty
-        && Boolean(documentSnapshot.path);
-      const result = usePath
-        ? await invoke<AnalyseRunResponse>("run_analyse_path", {
-          request: {
-            ...commonRequest,
-            path: documentSnapshot.path,
-            expectedFileSize: documentSnapshot.fileSize,
-          },
-        })
-        : await invoke<AnalyseRunResponse>("run_analyse", {
-          request: { ...commonRequest, text: documentSnapshot.text },
-        });
-      if (!isCurrentResult(result)) {
-        await releaseResultBatch(result.resultToken);
-        host.log("Analyse 已丢弃过期结果");
+      const combinedHits = new Map<number, number>();
+      const completedDocumentIds = new Set<number>();
+      const failedDocuments: string[] = [];
+      let completedDocuments = 0;
+      for (const documentSnapshot of documentSnapshots) {
+        if (!isRunCurrent(runId, requestedPatternRevision, documentSnapshots, searchAllOpenFiles)) return;
+        setStatus(`正在分析 ${documentSnapshot.title}（${completedDocuments + 1}/${documentSnapshots.length}）…`);
+        const commonRequest = {
+          runId,
+          documentId: documentSnapshot.id,
+          documentRevision: documentSnapshot.revision,
+          patternRevision: requestedPatternRevision,
+          patterns,
+        };
+        try {
+          const usePath = documentSnapshot.largeFile
+            && !documentSnapshot.dirty
+            && Boolean(documentSnapshot.path);
+          const result = usePath
+            ? await invoke<AnalyseRunResponse>("run_analyse_path", {
+              request: {
+                ...commonRequest,
+                path: documentSnapshot.path,
+                expectedFileSize: documentSnapshot.fileSize,
+              },
+            })
+            : await invoke<AnalyseRunResponse>("run_analyse", {
+              request: { ...commonRequest, text: documentSnapshot.text },
+            });
+          if (!isCurrentResult(result, documentSnapshots, searchAllOpenFiles)) {
+            await releaseResultBatch(result.resultToken);
+            host.log("Analyse 已丢弃过期结果");
+            return;
+          }
+          if (!await consumeResultBatches(
+            result,
+            () => isRunCurrent(runId, requestedPatternRevision, documentSnapshots, searchAllOpenFiles),
+          )) return;
+          for (const line of result.lines) {
+            line.sourceDocumentId = documentSnapshot.id;
+            line.sourceDocumentTitle = documentSnapshot.title;
+          }
+          combined.lines.push(...result.lines);
+          combined.totalMatches += result.totalMatches;
+          combined.totalLines += result.totalLines;
+          for (const item of result.patternHits) {
+            combinedHits.set(item.patternId, (combinedHits.get(item.patternId) ?? 0) + item.hits);
+          }
+          combined.patternErrors.push(...result.patternErrors.map((item) => ({
+            ...item,
+            message: `${documentSnapshot.title}: ${item.message}`,
+          })));
+          completedDocuments += 1;
+          completedDocumentIds.add(documentSnapshot.id);
+        } catch (error) {
+          if (!isRunCurrent(runId, requestedPatternRevision, documentSnapshots, searchAllOpenFiles)) return;
+          failedDocuments.push(documentSnapshot.title);
+          host.log(`Analyse 跳过 ${documentSnapshot.title}：${String(error)}`);
+        }
+      }
+      if (completedDocuments === 0) {
+        setStatus(`Analyse 失败：${failedDocuments.join("、")}`, true);
         return;
       }
-      if (!await consumeResultBatches(result)) return;
-      latestResult = result;
-      resultDocumentId = result.documentId;
+      combined.patternHits = [...combinedHits].map(([patternId, patternHits]) => ({
+        patternId,
+        hits: patternHits,
+      }));
+      combined.documentCount = completedDocuments;
+      latestResult = combined;
+      clearResultBookmarks();
+      for (const documentSnapshot of documentSnapshots) {
+        if (!completedDocumentIds.has(documentSnapshot.id)) continue;
+        resultDocumentIds.add(documentSnapshot.id);
+        const bookmarkLines = combined.lines
+          .filter((line) => line.sourceDocumentId === documentSnapshot.id)
+          .map((line) => line.sourceLine);
+        if (bookmarkLines.length === 0) continue;
+        host.setBookmarkLines(documentSnapshot.id, bookmarkLines);
+      }
       hits.clear();
       errors.clear();
-      for (const item of result.patternHits) hits.set(item.patternId, item.hits);
-      for (const item of result.patternErrors) errors.set(item.patternId, item.message);
+      for (const item of combined.patternHits) hits.set(item.patternId, item.hits);
+      for (const item of combined.patternErrors) {
+        const previous = errors.get(item.patternId);
+        errors.set(item.patternId, previous ? `${previous}\n${item.message}` : item.message);
+      }
       renderPatterns();
       host.setResultVisible(true);
       renderResult();
       window.requestAnimationFrame(() => resultEditor.layout());
-      host.setBookmarkLines(result.documentId, result.lines.map((line) => line.sourceLine));
       await writeBoundResult();
       setStatus(
-        `${result.totalLines} 行，${result.totalMatches} 个匹配${result.patternErrors.length ? `，${result.patternErrors.length} 个 Pattern 错误` : ""}`,
-        result.patternErrors.length > 0,
+        `${completedDocuments} 个文件，${combined.totalLines} 行，${combined.totalMatches} 个匹配${combined.patternErrors.length ? `，${combined.patternErrors.length} 个 Pattern 错误` : ""}${failedDocuments.length ? `，跳过 ${failedDocuments.length} 个文件` : ""}`,
+        combined.patternErrors.length > 0 || failedDocuments.length > 0,
       );
     } catch (error) {
       if (runId !== nextRunId) return;
@@ -755,21 +843,38 @@ export function createAnalysePanel(
     }
   }
 
-  function isCurrentResult(result: AnalyseRunResponse) {
-    const current = host.getDocument();
-    return result.runId === nextRunId
-      && result.documentId === current.id
-      && result.documentRevision === current.revision
-      && result.patternRevision === patternRevision;
+  function isCurrentResult(
+    result: AnalyseRunResponse,
+    documents: AnalyseDocumentSnapshot[],
+    searchAllOpenFiles: boolean,
+  ) {
+    const expected = documents.find((document) => document.id === result.documentId);
+    return Boolean(expected)
+      && result.documentRevision === expected?.revision
+      && isRunCurrent(result.runId, result.patternRevision, documents, searchAllOpenFiles);
   }
 
-  async function consumeResultBatches(result: AnalyseRunResponse) {
+  function isRunCurrent(
+    runId: number,
+    requestedPatternRevision: number,
+    documents: AnalyseDocumentSnapshot[],
+    searchAllOpenFiles: boolean,
+  ) {
+    if (runId !== nextRunId || requestedPatternRevision !== patternRevision) return false;
+    if (!searchAllOpenFiles && host.getActiveDocumentId() !== documents[0]?.id) return false;
+    const currentDocuments = host.getDocumentRevisions();
+    if (searchAllOpenFiles && currentDocuments.length !== documents.length) return false;
+    const currentById = new Map(currentDocuments.map((document) => [document.id, document]));
+    return documents.every((document) => currentById.get(document.id)?.revision === document.revision);
+  }
+
+  async function consumeResultBatches(result: AnalyseRunResponse, isCurrent: () => boolean) {
     const resultToken = result.resultToken;
     if (!resultToken) return true;
     let offset = result.lines.length;
     try {
       while (offset < result.totalLines) {
-        if (!isCurrentResult(result)) {
+        if (!isCurrent()) {
           await releaseResultBatch(resultToken);
           return false;
         }
@@ -783,7 +888,7 @@ export function createAnalysePanel(
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
       result.resultToken = null;
-      return isCurrentResult(result);
+      return isCurrent();
     } catch (error) {
       await releaseResultBatch(resultToken);
       throw error;
@@ -801,20 +906,26 @@ export function createAnalysePanel(
       return;
     }
     const showLines = input("show-lines").checked;
-    const digits = String(latestResult.lines.at(-1)?.sourceLine ?? 1).length;
     const renderedLines: string[] = [];
     resultMapping = [];
     const decorations: monaco.editor.IModelDeltaDecoration[] = [];
     const styleClasses = new Map<string, string>();
     const styleRules: string[] = [];
+    const documentCount = latestResult.documentCount ?? new Set(
+      latestResult.lines.map((line) => line.sourceDocumentId ?? latestResult?.documentId),
+    ).size;
+    const sourceLineDigits = String(
+      latestResult.lines.reduce((maximum, line) => Math.max(maximum, line.sourceLine), 1),
+    ).length;
 
     latestResult.lines.forEach((line, index) => {
-      const prefix = showLines ? `${String(line.sourceLine).padStart(digits, " ")}: ` : "";
+      const prefix = resultLinePrefix(line, showLines, documentCount, sourceLineDigits);
       renderedLines.push(prefix + line.text);
       resultMapping.push({
         resultLine: index + 1,
-        sourceDocumentId: latestResult?.documentId ?? 0,
+        sourceDocumentId: line.sourceDocumentId ?? latestResult?.documentId ?? 0,
         sourceLine: line.sourceLine,
+        sourceDocumentTitle: line.sourceDocumentTitle ?? "",
         matchingPatternIds: line.matchingPatternIds,
       });
       for (const segment of line.styledSegments) {
@@ -854,7 +965,7 @@ export function createAnalysePanel(
     resultDecorations.set(decorations);
     clearResultFind();
     renderMatchingPatterns(1);
-    element("result-summary").textContent = `${latestResult.lines.length} 行 / ${latestResult.totalMatches} 匹配`;
+    element("result-summary").textContent = `${documentCount} 个文件 / ${latestResult.lines.length} 行 / ${latestResult.totalMatches} 匹配`;
   }
 
   async function findResult(direction: 1 | -1) {
@@ -921,10 +1032,27 @@ export function createAnalysePanel(
     element("result-find-summary").textContent = `${activeResultFindIndex + 1}/${resultFindMatches.length}`;
   }
 
-  function resultPrefixLength(_lineNumber: number) {
-    if (!latestResult || !input("show-lines").checked) return 0;
-    const digits = String(latestResult.lines.at(-1)?.sourceLine ?? 1).length;
-    return digits + 2;
+  function resultPrefixLength(lineNumber: number) {
+    if (!latestResult) return 0;
+    const line = latestResult.lines[lineNumber - 1];
+    return line ? resultLinePrefix(line, input("show-lines").checked).length : 0;
+  }
+
+  function resultLinePrefix(
+    line: AnalyseLine,
+    showLines: boolean,
+    documentCount = latestResult
+      ? latestResult.documentCount ?? new Set(
+        latestResult.lines.map((item) => item.sourceDocumentId ?? latestResult?.documentId),
+      ).size
+      : 1,
+    digits = String(
+      latestResult?.lines.reduce((maximum, item) => Math.max(maximum, item.sourceLine), 1) ?? 1,
+    ).length,
+  ) {
+    const documentPrefix = documentCount > 1 ? `[${line.sourceDocumentTitle || "未命名"}] ` : "";
+    if (!showLines) return documentPrefix;
+    return `${documentPrefix}${String(line.sourceLine).padStart(digits, " ")}: `;
   }
 
   function renderResultFindDecorations() {
@@ -961,21 +1089,26 @@ export function createAnalysePanel(
       return pattern ? `#${id} ${pattern.searchText}` : `#${id}`;
     });
     element("matching-patterns").textContent = labels.length > 0
-      ? `Matching Patterns：${labels.join("；")}`
+      ? `${mapping.sourceDocumentTitle ? `${mapping.sourceDocumentTitle} · ` : ""}Matching Patterns：${labels.join("；")}`
       : "当前行无匹配 Pattern";
   }
 
   function syncSourceLine(sourceLine: number) {
     if (!input("scroll-sync").checked || syncingFromResult || resultMapping.length === 0) return;
-    let closest = 0;
-    for (let index = 1; index < resultMapping.length; index += 1) {
+    const activeDocumentId = host.getDocument().id;
+    const candidates = resultMapping
+      .map((mapping, index) => ({ mapping, index }))
+      .filter(({ mapping }) => mapping.sourceDocumentId === activeDocumentId);
+    if (candidates.length === 0) return;
+    let closest = candidates[0];
+    for (const candidate of candidates.slice(1)) {
       if (
-        Math.abs(resultMapping[index].sourceLine - sourceLine)
-        < Math.abs(resultMapping[closest].sourceLine - sourceLine)
-      ) closest = index;
+        Math.abs(candidate.mapping.sourceLine - sourceLine)
+        < Math.abs(closest.mapping.sourceLine - sourceLine)
+      ) closest = candidate;
     }
     syncingFromSource = true;
-    resultEditor.revealLineInCenterIfOutsideViewport(closest + 1);
+    resultEditor.revealLineInCenterIfOutsideViewport(closest.index + 1);
     queueMicrotask(() => { syncingFromSource = false; });
   }
 
@@ -1087,7 +1220,7 @@ export function createAnalysePanel(
     if (!latestResult) return Promise.reject(new Error("Analyse Result is empty"));
     return invoke<string>("serialize_analyse_rtf", {
       request: {
-        lines: latestResult.lines,
+        lines: serializableResultLines(),
         showLineNumbers: input("show-lines").checked,
         fontSize: Number(input("result-font").value) || 12,
       },
@@ -1098,16 +1231,39 @@ export function createAnalysePanel(
     if (!latestResult) return Promise.reject(new Error("Analyse Result is empty"));
     return invoke<string>("serialize_analyse_html", {
       request: {
-        lines: latestResult.lines,
+        lines: serializableResultLines(),
         showLineNumbers: input("show-lines").checked,
         fontSize: Number(input("result-font").value) || 12,
       },
     });
   }
 
+  function serializableResultLines() {
+    if (!latestResult) return [];
+    const documentCount = latestResult.documentCount ?? new Set(
+      latestResult.lines.map((line) => line.sourceDocumentId ?? latestResult?.documentId),
+    ).size;
+    if (documentCount <= 1) return latestResult.lines;
+    const encoder = new TextEncoder();
+    return latestResult.lines.map((line) => {
+      const prefix = `[${line.sourceDocumentTitle || "未命名"}] `;
+      const prefixBytes = encoder.encode(prefix).length;
+      return {
+        ...line,
+        text: prefix + line.text,
+        styledSegments: line.styledSegments.map((segment) => ({
+          ...segment,
+          startByteInLine: segment.startByteInLine + prefixBytes,
+          endByteInLine: segment.endByteInLine + prefixBytes,
+        })),
+      };
+    });
+  }
+
   function applySettings() {
     const settings = host.getSettings();
     input("auto-update").checked = settings.autoUpdate;
+    input("all-open-files").checked = settings.searchAllOpenFiles;
     input("show-lines").checked = settings.showLineNumbers;
     input("word-wrap").checked = settings.wordWrap;
     input("scroll-sync").checked = settings.scrollSync;
@@ -1133,6 +1289,7 @@ export function createAnalysePanel(
   function persistSettings() {
     host.updateSettings({
       autoUpdate: input("auto-update").checked,
+      searchAllOpenFiles: input("all-open-files").checked,
       showLineNumbers: input("show-lines").checked,
       wordWrap: input("word-wrap").checked,
       fontSize: Number(input("result-font").value) || 12,
@@ -1153,22 +1310,23 @@ export function createAnalysePanel(
   function clearResultState() {
     if (activeRunId !== null) cancelActiveRun(false);
     else nextRunId += 1;
-    latestResult = null;
     hits.clear();
     errors.clear();
-    if (resultDocumentId !== null) host.setBookmarkLines(resultDocumentId, []);
-    resultDocumentId = null;
-    clearResult();
+    clearResult(true);
     renderPatterns();
     setStatus("Analyse 结果已清除");
   }
 
   function clearResult(updateBookmarks = false) {
-    if (updateBookmarks && resultDocumentId !== null) host.setBookmarkLines(resultDocumentId, []);
+    if (updateBookmarks) clearResultBookmarks();
     latestResult = null;
-    resultDocumentId = null;
     clearResultModel();
     host.setResultVisible(false);
+  }
+
+  function clearResultBookmarks() {
+    for (const documentId of resultDocumentIds) host.setBookmarkLines(documentId, []);
+    resultDocumentIds.clear();
   }
 
   function invalidateResult(autoRun = true) {
@@ -1194,7 +1352,7 @@ export function createAnalysePanel(
   function setRunning(running: boolean) {
     element<HTMLButtonElement>("run").disabled = running;
     element("run").classList.toggle("running", running);
-    element("run").textContent = running ? "分析中…" : "运行";
+    element("run").innerHTML = runButtonContent(running);
     element<HTMLButtonElement>("cancel").disabled = !running;
   }
 
@@ -1215,8 +1373,8 @@ export function createAnalysePanel(
   }
 
   function notifyDocumentChanged(documentId: number) {
-    if (documentId !== host.getDocument().id) return;
-    if (resultDocumentId === documentId) clearResult(true);
+    if (!input("all-open-files").checked && documentId !== host.getDocument().id) return;
+    if (resultDocumentIds.has(documentId)) clearResult(true);
     scheduleAutoRun();
   }
 
@@ -1228,10 +1386,17 @@ export function createAnalysePanel(
 
   function syncDocument() {
     const current = host.getDocument();
-    if (resultDocumentId !== null && resultDocumentId !== current.id) {
+    const openDocumentIds = new Set(host.getDocumentRevisions().map((document) => document.id));
+    const resultDocumentClosed = [...resultDocumentIds].some((documentId) => !openDocumentIds.has(documentId));
+    const switchedSingleDocument = !input("all-open-files").checked
+      && resultDocumentIds.size > 0
+      && !resultDocumentIds.has(current.id);
+    if (resultDocumentClosed || switchedSingleDocument) {
       if (activeRunId !== null) cancelActiveRun(false);
       clearResult(true);
-      setStatus(`已切换到 ${current.title}，运行以生成结果`);
+      setStatus(resultDocumentClosed
+        ? "打开文件集合已变化，运行以生成新结果"
+        : `已切换到 ${current.title}，运行以生成结果`);
       scheduleAutoRun();
     }
     resultEditor.layout();
@@ -1323,6 +1488,13 @@ function validColor(value: string) {
   return /^#[0-9A-F]{6}$/i.test(value);
 }
 
+function runButtonContent(running: boolean) {
+  const icon = running
+    ? '<svg class="analyse-run-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.56" /></svg>'
+    : '<svg class="analyse-run-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z" /></svg>';
+  return `${icon}<span>${running ? "分析中…" : "运行"}</span>`;
+}
+
 function clipboardSupportsMime(mime: string) {
   const supports = (ClipboardItem as typeof ClipboardItem & {
     supports?: (type: string) => boolean;
@@ -1352,8 +1524,9 @@ function panelMarkup() {
       <header class="analyse-panel-head">
         <div><strong>Analyse</strong><span data-analyse-role="pattern-count">0 个 Pattern</span></div>
         <div>
+          <label class="analyse-auto-update"><input data-analyse-role="all-open-files" type="checkbox" />全部打开文件</label>
           <label class="analyse-auto-update"><input data-analyse-role="auto-update" type="checkbox" />自动</label>
-          <button class="primary" data-analyse-role="run" type="button">运行</button>
+          <button class="primary analyse-run-button" data-analyse-role="run" type="button">${runButtonContent(false)}</button>
           <button data-analyse-role="cancel" type="button" disabled>取消</button>
           <button data-analyse-role="clear-result" type="button">清除结果</button>
         </div>

@@ -4,6 +4,7 @@
   --surface: #ffffff;
   --surface-2: #f5f8fc;
   --surface-3: #eaf0f8;
+  --input-surface: #f5f8fc;
   --editor: #ffffff;
   --line: #d2dce9;
   --line-soft: #e4ebf4;
@@ -11,8 +12,8 @@
   --text-2: #334155;
   --text-3: #64748b;
   --primary: #3238d8;
-  --primary-2: #eef1ff;
-  --primary-3: #dfe4ff;
+  --primary-2: color-mix(in srgb, var(--primary) 9%, var(--surface));
+  --primary-3: color-mix(in srgb, var(--primary) 16%, var(--surface));
   --green: #16a34a;
   --amber: #f59e0b;
   --danger: #d92d20;
@@ -78,7 +79,7 @@
   border: 1px solid var(--line);
   border-radius: 5px;
   color: var(--text);
-  background: var(--surface);
+  background: var(--input-surface);
   font: inherit;
 }
 
@@ -97,6 +98,46 @@
   color: #fff;
   border-color: var(--primary);
   background: var(--primary);
+}
+
+.analyse-panel button.primary:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 88%, #000);
+}
+
+.analyse-run-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.analyse-run-button:disabled {
+  color: #fff;
+}
+
+.analyse-run-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.analyse-run-button:not(.running) .analyse-run-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
+.analyse-run-button.running .analyse-run-icon {
+  animation: analyse-run-spin 800ms linear infinite;
+}
+
+@keyframes analyse-run-spin {
+  to { transform: rotate(360deg); }
 }
 
 .analyse-panel button:disabled {
@@ -268,12 +309,19 @@
 }
 
 .analyse-patterns tbody tr {
+  color: var(--analyse-pattern-foreground, var(--text));
+  background: var(--analyse-pattern-background, transparent);
   cursor: default;
 }
 
 .analyse-patterns tbody tr:hover,
 .analyse-patterns tbody tr.selected {
-  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  background: color-mix(
+    in srgb,
+    var(--primary) 12%,
+    var(--analyse-pattern-background, var(--surface))
+  );
+  box-shadow: inset 3px 0 var(--primary);
 }
 
 .analyse-patterns tbody tr.disabled {
@@ -429,6 +477,7 @@ body.dark {
   --surface: #1d2431;
   --surface-2: #202838;
   --surface-3: #273145;
+  --input-surface: #202838;
   --editor: #151b26;
   --line: #333e52;
   --line-soft: #263044;
@@ -436,8 +485,8 @@ body.dark {
   --text-2: #c8d1df;
   --text-3: #93a0b4;
   --primary: #858bff;
-  --primary-2: #252b54;
-  --primary-3: #313766;
+  --primary-2: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  --primary-3: color-mix(in srgb, var(--primary) 22%, var(--surface));
   --green: #4ade80;
   --amber: #fbbf24;
   --danger: #f87171;
@@ -486,7 +535,7 @@ body {
   --icon-color: var(--text-3);
   --code-block-bg-color: var(--surface-2);
   --table-border-color: var(--line);
-  --input-bg-color: var(--surface-2);
+  --input-bg-color: var(--input-surface);
   --button-font-color: var(--text-2);
   --button-bg-color: var(--surface);
   --button-border: 1px solid var(--line);
@@ -1784,7 +1833,7 @@ select:focus-visible {
   border: 1px solid var(--primary);
   border-radius: 4px;
   outline: none;
-  background: var(--surface);
+  background: var(--input-surface);
   color: var(--text);
   padding: 0 5px;
   font-size: 13px;
@@ -2873,7 +2922,7 @@ body.dark .markdown-preview .token.variable {
   height: 34px;
   border: 1px solid var(--glass-border-strong);
   border-radius: 8px;
-  background: var(--glass-surface-strong);
+  background: var(--input-surface);
   color: var(--text);
   padding: 0 10px;
   outline: none;
@@ -3027,7 +3076,7 @@ body.dark .markdown-preview .token.variable {
   height: 34px;
   border: 1px solid var(--glass-border-strong);
   border-radius: 8px;
-  background: var(--glass-surface-strong);
+  background: var(--input-surface);
   color: var(--text);
   padding: 0 10px;
   outline: none;
@@ -3747,7 +3796,7 @@ tbody tr.result-active {
   height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface-2);
+  background: var(--input-surface);
   color: var(--text);
   padding: 0 11px;
   outline: none;
@@ -4052,6 +4101,44 @@ tbody tr.result-active {
 
 .theme-swatches.dark-swatch i:nth-child(3) {
   background: #858bff;
+}
+
+.theme-color-grid {
+  max-width: 900px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.theme-color-grid label {
+  min-height: 44px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 11px;
+  color: var(--text-2);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.theme-color-grid input[type="color"] {
+  width: 42px;
+  height: 30px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 2px;
+  background: var(--input-surface);
+  cursor: pointer;
+}
+
+.theme-color-reset {
+  grid-column: 1 / -1;
+  justify-self: start;
+  border-color: var(--line-soft);
+  background: var(--surface);
 }
 
 .settings-list {
@@ -4660,7 +4747,7 @@ tbody tr.result-active {
   border-radius: 8px;
   padding: 0 10px;
   color: var(--text);
-  background: var(--surface-2);
+  background: var(--input-surface);
   font-size: 11px;
   outline: none;
 }
@@ -4743,6 +4830,10 @@ tbody tr.result-active {
   }
 
   .theme-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .theme-color-grid {
     grid-template-columns: 1fr;
   }
 
@@ -4926,7 +5017,7 @@ tbody tr.result-active {
   border-color: var(--line);
   border-radius: 6px;
   padding-inline: 9px;
-  background: var(--surface);
+  background: var(--input-surface);
 }
 
 .right-tool-pane .find-flags {
@@ -5861,7 +5952,7 @@ tbody tr.result-active {
   height: 30px;
   border-color: var(--line);
   border-radius: 6px;
-  background: var(--surface);
+  background: var(--input-surface);
 }
 
 .current-find-dock .find-flags {
