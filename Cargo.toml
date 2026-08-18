@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "crates/notra-core",
-    "crates/notra-app",
+    "crates/otterdive-core",
+    "crates/otterdive-app",
 ]
 resolver = "2"
 
@@ -11,7 +11,7 @@ license = "MIT"
 repository = "https://github.com/syscryer/Notra"
 
 [workspace.dependencies]
-notra-core = { path = "crates/notra-core" }
+otterdive-core = { path = "crates/otterdive-core" }
 tauri = "2"
 tauri-build = "2"
 tauri-plugin-window-state = "2.4.1"

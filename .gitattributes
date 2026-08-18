@@ -1,0 +1,6 @@
+tests/analyse-compat/fixtures/*.txt text eol=lf
+tests/analyse-compat/profiles/*.xml text eol=lf
+tests/analyse-compat/expected/*.json text eol=lf
+tests/analyse-compat/cases/*.json text eol=lf
+tests/analyse-compat/reference/*.json text eol=lf
+tests/analyse-compat/reference/*.ps1 text eol=crlf

@@ -2194,39 +2194,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
-name = "notra-app"
-version = "0.1.8"
-dependencies = [
- "notra-core",
- "regex",
- "rfd",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tauri-plugin-window-state",
- "winreg",
-]
-
-[[package]]
-name = "notra-core"
-version = "0.1.8"
-dependencies = [
- "encoding_rs",
- "fancy-regex",
- "memmap2",
- "quick-xml 0.41.0",
- "regex",
- "serde",
- "serde_json",
- "walkdir",
-]
-
-[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2511,6 +2478,39 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "otterdive-app"
+version = "0.1.8"
+dependencies = [
+ "otterdive-core",
+ "regex",
+ "rfd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tauri-plugin-window-state",
+ "winreg",
+]
+
+[[package]]
+name = "otterdive-core"
+version = "0.1.8"
+dependencies = [
+ "encoding_rs",
+ "fancy-regex",
+ "memmap2",
+ "quick-xml 0.41.0",
+ "regex",
+ "serde",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]

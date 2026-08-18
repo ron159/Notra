@@ -1,6 +1,6 @@
 # Phase 1 Extended Cases
 
-The executable corpus lives in `notra-core::analyse::extended` unit tests. It
+The executable corpus lives in `otterdive-core::analyse::extended` unit tests. It
 covers simple escapes, binary/octal/decimal/hex values, `\uHHHH`, mixed Unicode,
 invalid and truncated fallback, NUL, trailing backslash, and UTF-16 surrogate
 pairs.

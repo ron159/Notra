@@ -1,12 +1,13 @@
 target/
 target-codex-run/
-crates/notra-app/gen/
-crates/notra-app/frontend/dist/
-crates/notra-app/frontend/node_modules/
+crates/otterdive-app/gen/
+crates/otterdive-app/frontend/dist/
+crates/otterdive-app/frontend/node_modules/
 node_modules/
 .reference/
 .learnings/
 local_doc/
+docs/
 .idea/
 .vscode/
 *.log

@@ -1,7 +1,7 @@
 # Analyse Compatibility Reference
 
 This directory stores independently authored inputs and expected behavior for the
-Notra Analyse compatibility harness. It must not contain AnalysePlugin source,
+OtterDive Analyse compatibility harness. It must not contain AnalysePlugin source,
 its XSD, or other GPL implementation files.
 
 ## Frozen reference
@@ -19,7 +19,7 @@ its XSD, or other GPL implementation files.
 | `notepad++.exe` SHA-256 | `6eebed1fd47637616e93a797fe061d6504ad81454a822ec3bfd172a0f922c884` |
 | Notepad++ architecture | x86-64 |
 | Windows version | Not yet frozen |
-| Notra Regex backend | `fancy-regex` 0.14.0, MIT |
+| OtterDive Regex backend | `fancy-regex` 0.14.0, MIT |
 | Reference Regex runtime | Not yet identified from executed Golden cases |
 
 Official downloads:
@@ -32,7 +32,7 @@ no Wine, QEMU, VirtualBox, or Parallels command-line runtime, so Windows executi
 and Golden output generation remain open. These cases are Release compatibility
 tests; they do not block functional implementation or UI development.
 
-Notra uses one pure-Rust Regex backend on all supported platforms. The Analyse
+OtterDive uses one pure-Rust Regex backend on all supported platforms. The Analyse
 adapter adds `\R`, line-anchor defaults, Dot Matches Newline selection, a
 backtrack limit, zero-length progress, Pattern-level errors, and cancellation
 checks. The Matcher trait remains replaceable if Release testing finds a
@@ -47,12 +47,12 @@ the x64 plugin into portable Notepad++, and records Windows environment evidence
 1. Run the fixture text and profile in the frozen Windows reference environment.
 2. Record semantic output under `expected/`: source lines, match counts, matching
    pattern order, resolved style segments, and errors.
-3. Run the same input through `notra-core`.
+3. Run the same input through `otterdive-core`.
 4. Compare structured output. Screenshots are supplementary evidence only.
 
 Phase 1 fixtures cover domain defaults, extended translation, and XML profile
 semantics. Phase 2 adds a structured Normal-search/Merge/Style contract. Any
 expected file not produced by the binary Oracle carries an explicit
 `provisional_not_binary_verified` marker. Binary-dependent results remain
-provisional compatibility evidence, while deterministic Notra contracts are
+provisional compatibility evidence, while deterministic OtterDive contracts are
 valid functional regression tests.

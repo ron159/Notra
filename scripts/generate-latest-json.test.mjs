@@ -7,11 +7,11 @@ import path from "node:path";
 import { generateLatestJson } from "./generate-latest-json.mjs";
 
 test("生成三个平台的 Tauri 更新清单", async () => {
-  const assetsDir = await mkdtemp(path.join(os.tmpdir(), "notra-latest-json-"));
+  const assetsDir = await mkdtemp(path.join(os.tmpdir(), "otterdive-latest-json-"));
   const artifacts = [
-    "Notra_0.1.3_x64-setup-windows-x64.exe",
-    "Notra_0.1.3_aarch64-macos-arm64.app.tar.gz",
-    "Notra_0.1.3_amd64-linux-x64.AppImage",
+    "OtterDive_0.1.3_x64-setup-windows-x64.exe",
+    "OtterDive_0.1.3_aarch64-macos-arm64.app.tar.gz",
+    "OtterDive_0.1.3_amd64-linux-x64.AppImage",
   ];
 
   try {
@@ -37,7 +37,7 @@ test("生成三个平台的 Tauri 更新清单", async () => {
       "linux-x86_64",
       "windows-x86_64",
     ]);
-    assert.match(manifest.platforms["windows-x86_64"].url, /v0\.1\.3\/Notra_0\.1\.3_x64-setup-windows-x64\.exe$/);
+    assert.match(manifest.platforms["windows-x86_64"].url, /v0\.1\.3\/OtterDive_0\.1\.3_x64-setup-windows-x64\.exe$/);
     const fileManifest = JSON.parse(await readFile(path.join(assetsDir, "latest.json"), "utf8"));
     assert.deepEqual(fileManifest, manifest);
   } finally {
@@ -46,9 +46,9 @@ test("生成三个平台的 Tauri 更新清单", async () => {
 });
 
 test("缺少签名时拒绝生成更新清单", async () => {
-  const assetsDir = await mkdtemp(path.join(os.tmpdir(), "notra-latest-json-missing-"));
+  const assetsDir = await mkdtemp(path.join(os.tmpdir(), "otterdive-latest-json-missing-"));
   try {
-    await writeFile(path.join(assetsDir, "Notra_0.1.3_x64-setup-windows-x64.exe"), "bundle");
+    await writeFile(path.join(assetsDir, "OtterDive_0.1.3_x64-setup-windows-x64.exe"), "bundle");
     await assert.rejects(
       generateLatestJson({
         assetsDir,

@@ -9,7 +9,7 @@ AnalysePlugin XSD.
 Run on a clean Windows x64 host from PowerShell:
 
 ```powershell
-.\prepare-oracle.ps1 -OutputDirectory C:\notra-analyse-oracle
+.\prepare-oracle.ps1 -OutputDirectory C:\otterdive-analyse-oracle
 ```
 
 The script:
