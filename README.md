@@ -1,10 +1,8 @@
 <p align="center">
-  <img src="crates/otterdive-app/icons/128x128.png" width="96" height="96" alt="OtterDive icon" />
+  <img src="crates/otterdive-app/icons/icon-source.png" width="144" height="144" alt="OtterDive icon" />
 </p>
 
 <h1 align="center">OtterDive</h1>
-
-<p align="center"><strong>Dive into massive text. Surface what matters.</strong></p>
 
 <p align="center">潜入海量文本，捞出真正重要的内容。</p>
 
@@ -19,24 +17,25 @@
 
 OtterDive 是一个面向文本、日志、Markdown 和代码的本地优先桌面工具。它把快速打开与编辑、工作区搜索、Regex、Analyse 规则分析和结构化结果浏览放进同一个工作流：潜入大量文本，再把真正相关的内容带回表面。
 
-## 主要功能
+## 为什么选择 OtterDive
 
-- 单文件与工作区模式，可直接打开或拖放文件和目录。
-- Monaco 编辑内核，提供多语言高亮、代码提示、折叠、括号匹配、多光标；超过可编辑阈值的文件以只读保护方式打开。
-- VS Code 与 Notepad++ 两套快捷键方案，支持按命令分组查看和自定义。
-- Markdown 默认即时编辑，并可切换源码或分屏预览模式。
-- Markdown 支持大纲、表格、任务列表、数学公式、网络图片，以及 Mermaid、PlantUML 和 Vega 图表。
-- 当前文件、全部已打开文档与工作区搜索，支持普通、扩展和正则表达式模式、结果导航与替换预览。
-- Analyse 可导入兼容 XML 规则，运行 Normal、Escaped、Regex 与多行 Regex 分析，并生成合并结果、样式标记、书签、HTML 和 RTF 输出。
-- UTF-8、UTF-8 BOM、UTF-16 和 ANSI 编码识别与转换，可切换 LF、CRLF 和 CR 行尾。
-- 临时文档、打开标签、窗口位置、工作区、搜索历史、Analyse 配置和编辑设置均可恢复。
-- 自绘标题栏、亮色与深色主题、文件类型图标和可调整的编辑器外观。
+面对大型日志、跨文件搜索和复杂规则分析，在编辑器与命令行工具之间频繁切换会打断排查节奏。OtterDive 将编辑、搜索、Regex、Analyse 和结果浏览集中在同一个窗口中，并优先在本地处理文件。
+
+## ✨ 功能亮点
+
+- 📂 **文件与工作区**：以单文件或工作区模式打开内容，支持直接选择或拖放文件和目录。
+- ✍️ **Monaco 编辑体验**：提供多语言高亮、代码提示、折叠、括号匹配和多光标；超过可编辑阈值的文件会以只读保护方式打开。
+- ⌨️ **熟悉的快捷键**：内置 VS Code 与 Notepad++ 两套方案，可按命令分组查看并自定义按键绑定。
+- 📝 **完整的 Markdown 工作流**：支持即时编辑、源码与分屏预览，以及大纲、表格、任务列表、数学公式、网络图片、Mermaid、PlantUML 和 Vega 图表。
+- 🔎 **多范围搜索**：搜索当前文件、全部已打开文档或整个工作区，支持普通、扩展和正则表达式模式、结果导航与替换预览。
+- 🧩 **Analyse 规则分析**：导入兼容 XML 规则，运行 Normal、Escaped、Regex 与多行 Regex 分析，并生成合并结果、样式标记、书签、HTML 和 RTF 输出。
+- 🔤 **编码与行尾处理**：识别并转换 UTF-8、UTF-8 BOM、UTF-16 和 ANSI 编码，可切换 LF、CRLF 与 CR 行尾。
+- 💾 **会话恢复**：恢复临时文档、打开标签、窗口位置、工作区、搜索历史、Analyse 配置和编辑设置。
+- 🎨 **一致的桌面体验**：提供自绘标题栏、亮色与深色主题、文件类型图标和可调整的编辑器外观。
 
 ## 当前状态
 
-OtterDive 仍在持续开发中。GitHub Releases 提供 Windows x64、macOS ARM64 与 Linux x64 安装包；Windows 10/11 是当前主要测试平台，macOS 与 Linux 版本由 GitHub Actions 自动构建。
-
-安装包可从 [GitHub Releases](https://github.com/syscryer/Notra/releases) 获取。
+OtterDive 仍在持续开发中。GitHub Releases 提供 Windows x64、macOS ARM64 与 Linux x64 安装包；
 
 ## 本地开发
 

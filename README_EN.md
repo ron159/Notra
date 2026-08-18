@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="crates/otterdive-app/icons/128x128.png" width="96" height="96" alt="OtterDive icon" />
+  <img src="crates/otterdive-app/icons/icon-source.png" width="144" height="144" alt="OtterDive icon" />
 </p>
 
 <h1 align="center">OtterDive</h1>
 
-<p align="center"><strong>Dive into massive text. Surface what matters.</strong></p>
+<p align="center">Dive into massive text. Surface what matters.</p>
 
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
@@ -17,24 +17,25 @@
 
 OtterDive is a local-first desktop tool for text, logs, Markdown, and source code. It brings fast opening and editing, workspace search, regular expressions, Analyse rule processing, and structured result browsing into one workflow: dive into large bodies of text and bring the relevant content back to the surface.
 
-## Key Features
+## Why OtterDive
 
-- Open or drag files and folders in single-file or workspace mode.
-- Monaco-based editing with syntax highlighting, completion, folding, bracket matching, multiple cursors, and read-only protection for files above the editable-size threshold.
-- VS Code and Notepad++ keymap profiles, with grouped command discovery and custom bindings.
-- Instant Markdown editing with source and split-preview modes.
-- Markdown outlines, tables, task lists, math, remote images, Mermaid, PlantUML, and Vega diagrams.
-- Search the current file, all open documents, or an entire workspace with normal, extended, and regular-expression modes, result navigation, and replacement previews.
-- Import compatible XML profiles into Analyse, run Normal, Escaped, Regex, and multiline Regex rules, and export merged results, styles, bookmarks, HTML, and RTF.
-- Detect and convert UTF-8, UTF-8 BOM, UTF-16, and ANSI encodings, with LF, CRLF, and CR line-ending support.
-- Restore drafts, open tabs, window placement, workspaces, search history, Analyse settings, and editor preferences.
-- Custom window chrome, light and dark themes, file-type icons, and configurable editor appearance.
+Large logs, cross-file searches, and complex rule analysis often force you to jump between an editor and command-line tools. OtterDive keeps editing, search, regular expressions, Analyse, and result browsing in one window, with local-first file processing.
+
+## ✨ Feature Highlights
+
+- 📂 **Files and workspaces**: Open content in single-file or workspace mode by selecting or dragging files and folders.
+- ✍️ **Monaco editing experience**: Get syntax highlighting, completion, folding, bracket matching, and multiple cursors; files above the editable-size threshold open in protected read-only mode.
+- ⌨️ **Familiar keybindings**: Choose the built-in VS Code or Notepad++ profile, browse commands by group, and customize bindings.
+- 📝 **Complete Markdown workflow**: Use instant editing, source and split-preview modes, outlines, tables, task lists, math, remote images, Mermaid, PlantUML, and Vega diagrams.
+- 🔎 **Multi-scope search**: Search the current file, all open documents, or an entire workspace with normal, extended, and regular-expression modes, result navigation, and replacement previews.
+- 🧩 **Analyse rule processing**: Import compatible XML profiles, run Normal, Escaped, Regex, and multiline Regex rules, and generate merged results, styles, bookmarks, HTML, and RTF output.
+- 🔤 **Encoding and line endings**: Detect and convert UTF-8, UTF-8 BOM, UTF-16, and ANSI encodings, with LF, CRLF, and CR support.
+- 💾 **Session restoration**: Restore drafts, open tabs, window placement, workspaces, search history, Analyse settings, and editor preferences.
+- 🎨 **Consistent desktop experience**: Use custom window chrome, light and dark themes, file-type icons, and configurable editor appearance.
 
 ## Project Status
 
-OtterDive is under active development. GitHub Releases provide Windows x64, macOS ARM64, and Linux x64 packages. Windows 10/11 is currently the primary test platform; macOS and Linux packages are built by GitHub Actions.
-
-Downloads are available from [GitHub Releases](https://github.com/syscryer/Notra/releases).
+OtterDive is under active development. GitHub Releases provide Windows x64, macOS ARM64, and Linux x64 packages. 
 
 ## Local Development
 

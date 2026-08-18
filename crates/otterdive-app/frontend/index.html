@@ -528,6 +528,26 @@
             </header>
             <div class="settings-list">
               <div class="settings-row">
+                <span class="settings-row-icon icon-slot" data-icon="Save"></span>
+                <div>
+                  <strong>自动保存</strong>
+                  <span>停止编辑后自动保存已有路径的文件</span>
+                </div>
+                <label class="settings-number-control" for="settingsAutoSaveDelayInput">
+                  <input
+                    id="settingsAutoSaveDelayInput"
+                    type="number"
+                    min="1"
+                    max="3600"
+                    step="1"
+                    value="5"
+                    inputmode="numeric"
+                    aria-label="自动保存延迟秒数"
+                  />
+                  <span>秒</span>
+                </label>
+              </div>
+              <div class="settings-row">
                 <span class="settings-row-icon icon-slot" data-icon="WrapText"></span>
                 <div>
                   <strong>自动换行</strong>

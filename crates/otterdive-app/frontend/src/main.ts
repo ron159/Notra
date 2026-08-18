@@ -328,6 +328,7 @@ interface SessionSnapshot {
   minimap: boolean;
   smoothCaretAnimation: boolean;
   renderWhitespace: RenderWhitespaceMode;
+  autoSaveDelaySeconds: number;
   fontSize: number;
   shellFontMode: FontMode;
   shellFontPreset: ShellFontPreset;
@@ -721,6 +722,9 @@ const treeExtensionIcons: Record<string, TreeIconDescriptor> = {
 const SESSION_KEY = "otterdive.session.v1";
 const DEFAULT_SKIP_DIRS = ".git;target;target-codex-run;node_modules;dist;build";
 const DRAFT_ID_PREFIX = "draft";
+const DEFAULT_AUTO_SAVE_DELAY_SECONDS = 5;
+const MIN_AUTO_SAVE_DELAY_SECONDS = 1;
+const MAX_AUTO_SAVE_DELAY_SECONDS = 3600;
 const DEFAULT_SHELL_FONT_PRESET: ShellFontPreset = "system";
 const DEFAULT_EDITOR_FONT_PRESET: EditorFontPreset = "cascadia";
 const DEFAULT_SHELL_FONT_SIZE = 14;
@@ -851,6 +855,7 @@ const state = {
   minimap: false,
   smoothCaretAnimation: false,
   renderWhitespace: "selection" as RenderWhitespaceMode,
+  autoSaveDelaySeconds: DEFAULT_AUTO_SAVE_DELAY_SECONDS,
   fontSize: DEFAULT_EDITOR_FONT_SIZE,
   shellFontMode: "preset" as FontMode,
   shellFontPreset: DEFAULT_SHELL_FONT_PRESET as ShellFontPreset,
@@ -895,6 +900,7 @@ let nextId = 1;
 let editor: monaco.editor.IStandaloneCodeEditor;
 let sessionTimer = 0;
 let sessionWriteQueue: Promise<void> = Promise.resolve();
+const autoSaveTimers = new globalThis.Map<number, number>();
 let unsavedResolver: ((value: UnsavedChoice) => void) | null = null;
 let confirmResolver: ((value: boolean) => void) | null = null;
 let textInputResolver: ((value: string | null) => void) | null = null;
@@ -2074,6 +2080,9 @@ function bindActions() {
   bindCustomFontInput("settingsShellFontCustom", "shell");
   bindCustomFontInput("settingsEditorFontCustom", "editor");
   bindSegmentedSetting("settingsWordWrapControl", (value) => setWordWrap(value === "on"));
+  $<HTMLInputElement>("settingsAutoSaveDelayInput").addEventListener("change", (event) => {
+    setAutoSaveDelaySeconds((event.currentTarget as HTMLInputElement).valueAsNumber);
+  });
   bindSegmentedSetting("settingsMinimapControl", (value) => setMinimap(value === "on"));
   bindSegmentedSetting("settingsCaretAnimationControl", (value) => setSmoothCaretAnimation(value === "on"));
   bindSegmentedSetting("settingsWhitespaceControl", (value) => setWhitespace(value as RenderWhitespaceMode));
@@ -3027,6 +3036,25 @@ function setWordWrap(enabled: boolean) {
   log(`自动换行 ${state.wordWrap ? "已开启" : "已关闭"}`);
 }
 
+function normalizeAutoSaveDelaySeconds(value: unknown) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return DEFAULT_AUTO_SAVE_DELAY_SECONDS;
+  return Math.min(MAX_AUTO_SAVE_DELAY_SECONDS, Math.max(MIN_AUTO_SAVE_DELAY_SECONDS, Math.round(seconds)));
+}
+
+function setAutoSaveDelaySeconds(value: unknown) {
+  const seconds = normalizeAutoSaveDelaySeconds(value);
+  if (state.autoSaveDelaySeconds === seconds) {
+    $<HTMLInputElement>("settingsAutoSaveDelayInput").value = String(seconds);
+    return;
+  }
+  state.autoSaveDelaySeconds = seconds;
+  state.documents.forEach(scheduleAutoSave);
+  renderSettingsMenu();
+  scheduleSessionSave();
+  log(`自动保存延迟已设为 ${seconds} 秒`);
+}
+
 function setMinimap(enabled: boolean) {
   if (state.minimap === enabled) return;
   state.minimap = enabled;
@@ -3421,18 +3449,7 @@ async function flushSessionBeforeClose() {
 
 async function confirmCloseAll() {
   for (const doc of state.documents) {
-    if (!shouldPromptToSave(doc)) continue;
-    const choice = await askUnsavedChoice("退出 OtterDive", `"${doc.title}" 有未保存修改。`, doc.path);
-    if (choice === "cancel") return false;
-    if (choice === "save") {
-      try {
-        await saveDocument(doc, false);
-      } catch (error) {
-        log(`保存取消或失败：${String(error)}`);
-        return false;
-      }
-      if (doc.dirty) return false;
-    }
+    if (!(await confirmDocumentCanClose(doc, "退出 OtterDive"))) return false;
   }
   return true;
 }
@@ -3592,6 +3609,7 @@ function createDocument(
     scheduleMarkdownPreviewRender();
     if (doc.id === state.activeId) scheduleMarkdownEditorSync(doc);
     analysePanel?.notifyDocumentChanged(doc.id);
+    scheduleAutoSave(doc);
     scheduleSessionSave();
   });
   return doc;
@@ -3736,6 +3754,7 @@ async function saveAsActive() {
 async function saveDocument(doc: OpenDocument, forceSaveAs: boolean) {
   if (!doc) return;
   syncMarkdownModelFromEditor(doc);
+  cancelAutoSave(doc.id);
   if (doc.readOnly) {
     log(`只读文档未保存：${doc.readOnlyReason ?? doc.title}`);
     return false;
@@ -3771,6 +3790,27 @@ async function saveDocument(doc: OpenDocument, forceSaveAs: boolean) {
   scheduleSessionSave();
   log(`保存 ${doc.title}`);
   return true;
+}
+
+function cancelAutoSave(documentId: number) {
+  const timer = autoSaveTimers.get(documentId);
+  if (timer === undefined) return;
+  window.clearTimeout(timer);
+  autoSaveTimers.delete(documentId);
+}
+
+function scheduleAutoSave(doc: OpenDocument) {
+  cancelAutoSave(doc.id);
+  if (state.restoring || !doc.dirty || doc.readOnly || !doc.path) return;
+  const timer = window.setTimeout(() => {
+    autoSaveTimers.delete(doc.id);
+    const current = state.documents.find((item) => item.id === doc.id);
+    if (!current || !current.dirty || current.readOnly || !current.path) return;
+    void saveDocument(current, false).catch((error) => {
+      log(`自动保存失败：${current.title}：${String(error)}`);
+    });
+  }, state.autoSaveDelaySeconds * 1000);
+  autoSaveTimers.set(doc.id, timer);
 }
 
 async function saveAll() {
@@ -3869,6 +3909,7 @@ async function closeWorkspace() {
   const active = activeDocument();
   if (active) active.viewState = editor.saveViewState() ?? undefined;
   const workspaceDocumentIds = new Set(workspaceDocuments.map((doc) => doc.id));
+  workspaceDocuments.forEach((doc) => cancelAutoSave(doc.id));
   workspaceDocuments.forEach((doc) => disposeMarkdownEditor(doc.id));
   state.documents = state.documents.filter((doc) => !workspaceDocumentIds.has(doc.id));
   workspaceDocuments.forEach((doc) => doc.model.dispose());
@@ -3914,6 +3955,7 @@ async function closeDocument(id: number): Promise<boolean> {
   const doc = state.documents[index];
   if (!(await confirmDocumentCanClose(doc, "关闭文档"))) return false;
   rememberClosedDocument(doc);
+  cancelAutoSave(doc.id);
   disposeMarkdownEditor(doc.id);
   state.documents.splice(index, 1);
   doc.model.dispose();
@@ -3971,16 +4013,23 @@ async function reopenClosedDocument() {
 
 async function confirmDocumentCanClose(doc: OpenDocument, title: string) {
   if (!shouldPromptToSave(doc)) return true;
+  cancelAutoSave(doc.id);
   const choice = await askUnsavedChoice(title, `"${doc.title}" 有未保存修改。`, doc.path);
-  if (choice === "cancel") return false;
+  if (choice === "cancel") {
+    state.documents.forEach(scheduleAutoSave);
+    return false;
+  }
   if (choice !== "save") return true;
   try {
     await saveDocument(doc, false);
   } catch (error) {
     log(`保存取消或失败：${String(error)}`);
+    state.documents.forEach(scheduleAutoSave);
     return false;
   }
-  return !doc.dirty;
+  if (!doc.dirty) return true;
+  state.documents.forEach(scheduleAutoSave);
+  return false;
 }
 
 function shouldPromptToSave<T extends Pick<OpenDocument, "dirty" | "path" | "readOnly">>(
@@ -4599,6 +4648,7 @@ function removeOpenDocumentsForDeletedPath(path: string, isDir: boolean) {
   const remaining = state.documents.filter((doc) => {
     const remove = doc.path && pathMatchesTarget(doc.path, path, isDir);
     if (remove) {
+      cancelAutoSave(doc.id);
       disposeMarkdownEditor(doc.id);
       doc.model.dispose();
     }
@@ -4686,6 +4736,7 @@ function convertEncoding(encoding: EncodingLabel) {
   doc.dirty = true;
   closeMenus();
   renderAll();
+  scheduleAutoSave(doc);
   scheduleSessionSave();
   log(`转为 ${encoding}，保存时写入`);
 }
@@ -6124,6 +6175,7 @@ function renderSettingsMenu() {
   }
   $("settingsShellFontValue").textContent = `${state.shellFontSize} px`;
   $("settingsFontValue").textContent = `${state.fontSize} px`;
+  $<HTMLInputElement>("settingsAutoSaveDelayInput").value = String(state.autoSaveDelaySeconds);
   setFontDropdownLabel("settingsShellFontModeLabel", FONT_MODE_LABELS[state.shellFontMode]);
   setFontDropdownLabel("settingsShellFontPresetLabel", SHELL_FONT_LABELS[state.shellFontPreset]);
   setFontDropdownLabel("settingsEditorFontModeLabel", FONT_MODE_LABELS[state.editorFontMode]);
@@ -8875,6 +8927,7 @@ async function restoreSession() {
     state.minimap = snapshot.minimap ?? state.minimap;
     state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
     state.renderWhitespace = snapshot.renderWhitespace ?? state.renderWhitespace;
+    state.autoSaveDelaySeconds = normalizeAutoSaveDelaySeconds(snapshot.autoSaveDelaySeconds);
     state.fontSize = snapshot.fontSize ?? state.fontSize;
     state.themeOverrides = normalizeThemeOverrides(snapshot.themeOverrides);
     state.shellFontMode = normalizeFontMode(snapshot.shellFontMode, state.shellFontMode);
@@ -9120,7 +9173,7 @@ async function saveSession() {
   if (activeBeforeSave) activeBeforeSave.viewState = editor.saveViewState() ?? undefined;
   const active = activeDocument();
   const snapshot: SessionSnapshot = {
-    version: 7,
+    version: 8,
     openFiles: uniquePaths(state.documents.flatMap((doc) => (doc.path ? [doc.path] : []))),
     draftDocuments: draftDocumentSnapshots(),
     documentOrigins: Object.fromEntries(
@@ -9161,6 +9214,7 @@ async function saveSession() {
     minimap: state.minimap,
     smoothCaretAnimation: state.smoothCaretAnimation,
     renderWhitespace: state.renderWhitespace,
+    autoSaveDelaySeconds: state.autoSaveDelaySeconds,
     fontSize: state.fontSize,
     shellFontMode: state.shellFontMode,
     shellFontPreset: state.shellFontPreset,
