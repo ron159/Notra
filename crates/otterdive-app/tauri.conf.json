@@ -49,7 +49,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzRDA3NjlBQkM0RDA1M0YKUldRL0JVMjhtbmJROHkwV2xySGFYQmVYUk1QUmFYV0pFSlFwcUlURmhrU0JUdGFQdlRld25wRVQK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1MkZDQzcyRjFERUQwRjYKUldUMjBON3hjc3d2ZGJUcDBscTVYd0c1VmhjNlhUZDBLdlRLV0JJaG9idGk2ME45R2liYm0xdncK",
       "endpoints": [
         "https://github.com/ron159/OtterDive/releases/latest/download/latest.json"
       ],
