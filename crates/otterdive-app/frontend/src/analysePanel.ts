@@ -208,7 +208,7 @@ export function createAnalysePanel(
     fontSize: 12,
     lineHeight: 19,
     padding: { top: 6, bottom: 6 },
-    scrollbar: { verticalScrollbarSize: 9, horizontalScrollbarSize: 9 },
+    scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
   });
   const resultDecorations = resultEditor.createDecorationsCollection();
   const resultFindDecorations = resultEditor.createDecorationsCollection();
@@ -229,7 +229,7 @@ export function createAnalysePanel(
   bindActions();
   renderPatterns();
   renderRecentProfiles();
-  setStatus("添加 Pattern 后即可分析当前文档");
+  setStatus("添加 Pattern，让水獭帮你梳理当前文档");
 
   function bindActions() {
     element("run").addEventListener("click", () => void run());
@@ -858,7 +858,7 @@ export function createAnalysePanel(
       window.requestAnimationFrame(() => resultEditor.layout());
       await writeBoundResult();
       setStatus(
-        `${completedDocuments} 个文件，${combined.totalLines} 行，${combined.totalMatches} 个匹配${combined.patternErrors.length ? `，${combined.patternErrors.length} 个 Pattern 错误` : ""}${failedDocuments.length ? `，跳过 ${failedDocuments.length} 个文件` : ""}`,
+        `${completedDocuments} 个文件，${combined.totalLines} 行，捞出 ${combined.totalMatches} 个匹配${combined.patternErrors.length ? `，${combined.patternErrors.length} 个 Pattern 错误` : ""}${failedDocuments.length ? `，跳过 ${failedDocuments.length} 个文件` : ""}`,
         combined.patternErrors.length > 0 || failedDocuments.length > 0,
       );
     } catch (error) {
@@ -993,7 +993,7 @@ export function createAnalysePanel(
     resultDecorations.set(decorations);
     clearResultFind();
     renderMatchingPatterns(1);
-    element("result-summary").textContent = `${documentCount} 个文件 / ${latestResult.lines.length} 行 / ${latestResult.totalMatches} 匹配`;
+    element("result-summary").textContent = `${documentCount} 个文件 / ${latestResult.lines.length} 行 / 捞出 ${latestResult.totalMatches} 个匹配`;
   }
 
   async function findResult(direction: 1 | -1) {
@@ -1047,7 +1047,7 @@ export function createAnalysePanel(
     if (resultFindMatches.length === 0) {
       activeResultFindIndex = -1;
       clearResultFindDecorations();
-      element("result-find-summary").textContent = "无匹配";
+      element("result-find-summary").textContent = "这次没有捞到匹配";
       return;
     }
     activeResultFindIndex = (
@@ -1373,7 +1373,7 @@ export function createAnalysePanel(
     resultDecorations.clear();
     clearResultFind();
     resultModel.setValue("");
-    element("result-summary").textContent = "暂无结果";
+    element("result-summary").textContent = "等待分析";
     element("matching-patterns").textContent = "当前行无匹配 Pattern";
   }
 
@@ -1415,16 +1415,22 @@ export function createAnalysePanel(
   function syncDocument() {
     const current = host.getDocument();
     const openDocumentIds = new Set(host.getDocumentRevisions().map((document) => document.id));
-    const resultDocumentClosed = [...resultDocumentIds].some((documentId) => !openDocumentIds.has(documentId));
+    const closedResultDocumentIds = [...resultDocumentIds]
+      .filter((documentId) => !openDocumentIds.has(documentId));
+    for (const documentId of closedResultDocumentIds) {
+      resultDocumentIds.delete(documentId);
+      host.setBookmarkLines(documentId, []);
+    }
     const switchedSingleDocument = !input("all-open-files").checked
       && resultDocumentIds.size > 0
       && !resultDocumentIds.has(current.id);
-    if (resultDocumentClosed || switchedSingleDocument) {
+    if (switchedSingleDocument) {
       if (activeRunId !== null) cancelActiveRun(false);
       clearResult(true);
-      setStatus(resultDocumentClosed
-        ? "打开文件集合已变化，运行以生成新结果"
-        : `已切换到 ${current.title}，运行以生成结果`);
+      setStatus(`已切换到 ${current.title}，运行以生成结果`);
+      scheduleAutoRun();
+    } else if (closedResultDocumentIds.length > 0 && latestResult) {
+      setStatus("来源文档已关闭，当前 Analyse 结果已保留；再次运行可刷新结果");
       scheduleAutoRun();
     }
     resultEditor.layout();
@@ -1617,7 +1623,7 @@ function resultMarkup() {
   return `
       <section class="analyse-result">
         <header>
-          <div><strong>结果</strong><span data-analyse-role="result-summary">暂无结果</span></div>
+          <div><strong>结果</strong><span data-analyse-role="result-summary">等待分析</span></div>
           <div class="analyse-result-options">
             <label><input data-analyse-role="show-lines" type="checkbox" checked />源行号</label>
             <label><input data-analyse-role="word-wrap" type="checkbox" />自动换行</label>

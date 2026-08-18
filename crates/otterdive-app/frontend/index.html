@@ -56,7 +56,7 @@
     <div class="boot-splash" id="bootSplash" aria-hidden="true">
       <div class="boot-card">
         <img class="boot-mark" src="/icon.png" alt="" />
-        <div>正在启动 OtterDive</div>
+        <div>OtterDive 正在准备潜入文本…</div>
       </div>
     </div>
     <main id="app">
@@ -269,6 +269,7 @@
                   <label title="匹配大小写"><input type="checkbox" id="currentMatchCaseInput" /><span>Aa</span></label>
                   <label title="全词匹配"><input type="checkbox" id="currentWholeWordInput" /><span>W</span></label>
                   <label title="正则表达式"><input type="checkbox" id="currentRegexInput" /><span>.*</span></label>
+                  <label title="搜索全部打开文件"><input type="checkbox" id="currentAllOpenFilesInput" aria-label="搜索全部打开文件" /><span class="icon-slot" data-icon="Files"></span></label>
                 </div>
                 <span class="current-find-count" id="currentFindCount">0 个结果</span>
                 <div class="current-find-actions">
@@ -675,6 +676,17 @@
                 </div>
               </div>
               <div class="settings-row">
+                <span class="settings-row-icon icon-slot" data-icon="FilePlus2"></span>
+                <div>
+                  <strong>双击新建类型</strong>
+                  <span>双击标签栏空白处时创建的默认文档</span>
+                </div>
+                <div class="seg-control wide" id="settingsDoubleClickDocumentControl">
+                  <button data-value="txt">TXT</button>
+                  <button data-value="md">Markdown</button>
+                </div>
+              </div>
+              <div class="settings-row">
                 <span class="settings-row-icon icon-slot" data-icon="Command"></span>
                 <div>
                   <strong>命令面板</strong>
@@ -733,7 +745,7 @@
                 <span class="settings-row-icon icon-slot" data-icon="Search"></span>
                 <div>
                   <strong>搜索侧栏</strong>
-                  <span>在右侧查看匹配预览并快速跳转</span>
+                  <span>在右侧预览匹配，快速捞出关键线索</span>
                 </div>
                 <button class="settings-action" id="settingsOpenFindButton">打开</button>
               </div>
@@ -749,7 +761,7 @@
               <img class="about-mark" src="/icon.png" alt="" />
               <div>
                 <strong>OtterDive</strong>
-                <span>Tauri + Monaco + Muya editor</span>
+                <span>潜入海量文本，捞出真正重要的内容</span>
               </div>
             </div>
             <div class="settings-list">
@@ -1008,6 +1020,7 @@
                   <label class="match-case-option" data-short="Aa" title="匹配大小写"><input type="checkbox" id="matchCaseInput" /><span>区分大小写</span></label>
                   <label class="wrap-option" data-short="循" title="循环查找"><input type="checkbox" id="wrapSearchInput" checked /><span>循环</span></label>
                   <label class="selection-option" data-short="选" title="选取范围内"><input type="checkbox" id="searchSelectionInput" /><span>选区</span></label>
+                  <label class="open-files-option" data-short="多" title="搜索全部打开文件"><input type="checkbox" id="allOpenFilesInput" /><span>全部打开文件</span></label>
                 </div>
                 <fieldset class="search-mode-field" id="searchModeInput">
                   <legend>查找模式</legend>
@@ -1065,8 +1078,8 @@
         </header>
         <div class="bottom-results-content">
           <section class="find-results-pane hidden" id="searchResultsPane" aria-label="搜索结果" aria-live="polite" aria-busy="false">
-            <header><strong id="findResultsTitle">搜索结果</strong><span id="findResultsSummary">暂无结果</span></header>
-            <div class="find-results-body" id="findResultsBody"></div>
+            <header><strong id="findResultsTitle">搜索结果</strong><span id="findResultsSummary">等待搜索</span></header>
+            <div class="find-results-body" id="findResultsBody"><div class="empty">输入关键词，让水獭帮你捞出线索</div></div>
           </section>
           <section class="analyse-result-host hidden" id="analyseResultHost" aria-label="Analyse 结果"></section>
         </div>

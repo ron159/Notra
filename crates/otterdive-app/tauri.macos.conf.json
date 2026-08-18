@@ -1,0 +1,21 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "OtterDive",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        }
+      }
+    ]
+  }
+}

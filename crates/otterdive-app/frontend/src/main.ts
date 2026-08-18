@@ -317,6 +317,8 @@ interface SessionSnapshot {
   treeScrollTop: number;
   markdownEditMode: MarkdownEditMode;
   markdownContentWidth: MarkdownContentWidth;
+  doubleClickDocumentType?: DoubleClickDocumentType;
+  documentOrder?: string[];
   showMarkdownPreview?: boolean;
   markdownPreviewPreferenceSet?: boolean;
   searchHistory: string[];
@@ -345,6 +347,7 @@ interface SessionSnapshot {
   reverseSearch: boolean;
   wrapSearch: boolean;
   searchSelection: boolean;
+  searchAllOpenFiles?: boolean;
   recursive: boolean;
   includeHidden: boolean;
   fileGlob: string;
@@ -433,6 +436,7 @@ type SearchMode = "literal" | "extended" | "regex";
 type WorkMode = "single" | "workspace";
 type MarkdownEditMode = "wysiwyg" | "split" | "source";
 type MarkdownContentWidth = "typora" | "compact" | "wide" | "full";
+type DoubleClickDocumentType = "txt" | "md";
 type DocumentOrigin = "standalone" | "workspace";
 type FindView = "find" | "replace" | "workspace-find" | "workspace-replace";
 type RightTool = "search" | "outline" | "analyse";
@@ -773,6 +777,8 @@ const SHELL_FONT_STACKS: Record<ShellFontPreset, string> = {
   sourceHanSans: '"Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI", sans-serif',
   misans: '"MiSans", "Microsoft YaHei UI", "Segoe UI", sans-serif',
 };
+const MACOS_SYSTEM_FONT_STACK =
+  '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif';
 
 const EDITOR_FONT_STACKS: Record<EditorFontPreset, string> = {
   cascadia: '"Cascadia Code", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace',
@@ -832,6 +838,7 @@ const state = {
   showDirectory: false,
   markdownEditMode: "wysiwyg" as MarkdownEditMode,
   markdownContentWidth: "typora" as MarkdownContentWidth,
+  doubleClickDocumentType: "txt" as DoubleClickDocumentType,
   darkMode: false,
   themeOverrides: { light: {}, dark: {} } as ThemeOverrides,
   panel: "results" as "results" | "preview" | "logs",
@@ -924,6 +931,7 @@ let analysePanel: AnalysePanelController | null = null;
 const analyseBookmarkLines = new globalThis.Map<number, number[]>();
 let tabMenuDocumentId = 0;
 let renderedTabsSignature = "";
+let draggedTabDocumentId: number | null = null;
 let tabScrollFrame = 0;
 let tabScrollResizeObserver: ResizeObserver | null = null;
 let sqlFormatterWorker: Worker | null = null;
@@ -1012,6 +1020,17 @@ type TextInputOptions = {
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
+const isMacOSRuntime =
+  isTauriRuntime && /Macintosh|Mac OS X/i.test(window.navigator.userAgent);
+document.documentElement.classList.toggle("platform-macos", isMacOSRuntime);
+const updateWindowActivationState = () => {
+  const inactive = !document.hasFocus() || document.visibilityState !== "visible";
+  document.documentElement.classList.toggle("window-inactive", inactive);
+};
+window.addEventListener("focus", updateWindowActivationState);
+window.addEventListener("blur", updateWindowActivationState);
+document.addEventListener("visibilitychange", updateWindowActivationState);
+updateWindowActivationState();
 const appWindow = isTauriRuntime ? getCurrentWindow() : null;
 const lucideIcons: Record<string, IconNode> = {
   AlignCenter,
@@ -1944,7 +1963,8 @@ function bindActions() {
     if (event.button !== 0 || event.target !== event.currentTarget) return;
     event.preventDefault();
     window.getSelection()?.removeAllRanges();
-    newDocument();
+    if (state.doubleClickDocumentType === "md") newMarkdownDocument();
+    else newDocument();
   });
   $("findButton").addEventListener("click", () => {
     setFindView("find");
@@ -1969,11 +1989,11 @@ function bindActions() {
   $("closeBottomResultsButton").addEventListener("click", closeBottomResults);
   $("editorArea").addEventListener("wheel", handleEditorWheelZoom, { passive: false });
   $("findResultsBody").addEventListener("wheel", handleSearchResultHorizontalScroll, { passive: false });
-  $("findCurrentButton").addEventListener("click", () => findCurrent(true));
+  $("findCurrentButton").addEventListener("click", () => findSelectedDocuments(true));
   $("findNextButton").addEventListener("click", () => void findNextResult());
   $("findPreviousButton").addEventListener("click", () => void findPreviousResult());
   $("replaceCurrentButton").addEventListener("click", replaceCurrentFile);
-  $("replaceAllCurrentButton").addEventListener("click", replaceAllCurrentFile);
+  $("replaceAllCurrentButton").addEventListener("click", replaceAllSelectedDocuments);
   $("findWorkspaceButton").addEventListener("click", () => void searchWorkspace());
   $("previewWorkspaceReplaceButton").addEventListener("click", () => void previewWorkspaceReplace());
   $("closeCurrentFindButton").addEventListener("click", closeFind);
@@ -1995,7 +2015,7 @@ function bindActions() {
   });
   $("currentFindAllButton").addEventListener("click", () => {
     syncCurrentFindControls();
-    findCurrent(true);
+    findSelectedDocuments(true);
   });
   $("currentReplaceButton").addEventListener("click", () => {
     syncCurrentFindControls();
@@ -2003,12 +2023,23 @@ function bindActions() {
   });
   $("currentReplaceAllButton").addEventListener("click", () => {
     syncCurrentFindControls();
-    replaceAllCurrentFile();
+    replaceAllSelectedDocuments();
   });
   $("currentFindInput").addEventListener("input", scheduleCurrentFind);
   $("currentReplaceInput").addEventListener("input", syncCurrentFindControls);
   ["currentMatchCaseInput", "currentWholeWordInput", "currentRegexInput"].forEach((id) => {
     $(id).addEventListener("change", scheduleCurrentFind);
+  });
+  $("currentAllOpenFilesInput").addEventListener("change", () => {
+    syncCurrentFindControls();
+    renderSearchScopeControls();
+    scheduleCurrentFind();
+  });
+  $("allOpenFilesInput").addEventListener("change", () => {
+    ($("currentAllOpenFilesInput") as HTMLInputElement).checked = searchAllOpenFilesEnabled();
+    renderSearchScopeControls();
+    if (!$("currentFindDock").classList.contains("hidden")) scheduleCurrentFind();
+    scheduleSessionSave();
   });
   $("currentFindInput").addEventListener("keydown", (event) => {
     const keyboardEvent = event as KeyboardEvent;
@@ -2089,6 +2120,7 @@ function bindActions() {
   bindSegmentedSetting("settingsKeymapProfileControl", (value) => setKeymapProfile(value));
   bindSegmentedSetting("settingsMarkdownWidthControl", (value) => setMarkdownContentWidth(value));
   bindSegmentedSetting("settingsMarkdownControl", (value) => setMarkdownEditMode(value as MarkdownEditMode));
+  bindSegmentedSetting("settingsDoubleClickDocumentControl", setDoubleClickDocumentType);
   bindSegmentedSetting("settingsModeControl", (value) => {
     if (value === "workspace") {
       void enterWorkspaceMode();
@@ -3090,6 +3122,14 @@ function setMarkdownContentWidth(value: string) {
   scheduleSessionSave();
 }
 
+function setDoubleClickDocumentType(value: string) {
+  if (!isDoubleClickDocumentType(value) || state.doubleClickDocumentType === value) return;
+  state.doubleClickDocumentType = value;
+  renderSettingsMenu();
+  scheduleSessionSave();
+  log(`双击标签栏新建：${value === "md" ? "Markdown" : "TXT"}`);
+}
+
 function setMarkdownEditMode(mode: MarkdownEditMode) {
   if (!isMarkdownEditMode(mode)) return;
   if (state.markdownEditMode === "wysiwyg") {
@@ -3961,6 +4001,10 @@ async function closeDocument(id: number): Promise<boolean> {
   doc.model.dispose();
   if (state.documents.length === 0) state.documents.push(createUntitledDocument());
   activateDocument(state.documents[Math.max(0, index - 1)].id);
+  if (state.searchScope === "open" && state.searchQuery) {
+    const keepResultsVisible = !$("bottomResultsDock").classList.contains("hidden");
+    findOpenDocuments(keepResultsVisible, false, false);
+  }
   scheduleSessionSave();
   return true;
 }
@@ -4741,13 +4785,21 @@ function convertEncoding(encoding: EncodingLabel) {
   log(`转为 ${encoding}，保存时写入`);
 }
 
+function findSelectedDocuments(showPanel = false, recordHistory = true, navigateToInitial = showPanel) {
+  if (searchAllOpenFilesEnabled()) {
+    findOpenDocuments(showPanel, recordHistory, navigateToInitial);
+    return;
+  }
+  findCurrent(showPanel, recordHistory);
+}
+
 function findCurrent(showPanel = false, recordHistory = true) {
   const query = ($("findInput") as HTMLInputElement).value;
   if (!query) {
     log("查找内容不能为空");
     return;
   }
-  const patternError = currentSearchPatternError(query);
+  const patternError = searchPatternError(query);
   setCurrentFindError(patternError);
   if (patternError) {
     resetSearchResults(true);
@@ -4796,19 +4848,28 @@ function findCurrent(showPanel = false, recordHistory = true) {
   log(`当前文件查找 ${total} 个命中`);
 }
 
-function findOpenDocuments() {
+function findOpenDocuments(showPanel = false, recordHistory = true, navigateToInitial = showPanel) {
   const query = ($("findInput") as HTMLInputElement).value;
   if (!query) {
     log("查找内容不能为空");
     return;
   }
-  commitSearchHistory();
+  const patternError = searchPatternError(query);
+  setCurrentFindError(patternError);
+  if (patternError) {
+    resetSearchResults(true);
+    setCurrentFindError(patternError);
+    log(patternError);
+    return;
+  }
+  if (recordHistory) commitSearchHistory();
+  syncMarkdownModelFromEditor(activeDocument());
   const hits = state.documents
     .map((doc) => ({
       path: doc.path || doc.title,
       fileName: doc.title,
       encoding: doc.encoding,
-      matches: modelMatches(doc),
+      matches: modelMatches(doc, false),
     }))
     .filter((hit) => hit.matches.length > 0);
   const report = {
@@ -4816,8 +4877,9 @@ function findOpenDocuments() {
     skipped: [],
     total: hits.reduce((sum, hit) => sum + hit.matches.length, 0),
   };
-  setSearchResults(report, "open");
-  if (report.total > 0) void openSearchResult(0);
+  const activeIndex = navigateToInitial ? initialSearchResultIndex(report.total) : -1;
+  setSearchResults(report, "open", activeIndex, showPanel);
+  if (activeIndex >= 0) void openSearchResult(activeIndex);
   log(`打开文档查找 ${report.total} 个命中`);
 }
 
@@ -4843,7 +4905,7 @@ function setSearchResults(
     renderRightSidebarToggle();
     scheduleSessionSave();
   }
-  if (scope !== "current" || showPanel) openBottomResults("search");
+  if (scope === "workspace" || showPanel) openBottomResults("search");
   renderSearchSidebarResults();
   renderCurrentFindCount();
   renderSearchDecorations();
@@ -4869,8 +4931,8 @@ function currentSearchSignature(scope = state.searchScope ?? "current") {
     String(($("wholeWordInput") as HTMLInputElement).checked),
     String(($("reverseSearchInput") as HTMLInputElement).checked),
     String(($("wrapSearchInput") as HTMLInputElement).checked),
-    String(($("searchSelectionInput") as HTMLInputElement).checked),
-    selectionSignature(),
+    String(scope === "current" && ($("searchSelectionInput") as HTMLInputElement).checked),
+    scope === "current" ? selectionSignature() : "all-open-documents",
     String(state.searchRevision),
   ];
   if (scope === "current") {
@@ -4898,11 +4960,13 @@ async function findNextResult() {
     log("查找内容不能为空");
     return;
   }
+  const requestedScope: SearchScope = searchAllOpenFilesEnabled() ? "open" : "current";
   if (
     !state.results ||
     state.results.total === 0 ||
+    state.searchScope !== requestedScope ||
     state.searchQuery !== query ||
-    state.searchSignature !== currentSearchSignature(state.searchScope ?? "current")
+    state.searchSignature !== currentSearchSignature(requestedScope)
   ) {
     await rerunSearchForNavigation();
     return;
@@ -4920,11 +4984,13 @@ async function findPreviousResult() {
     log("查找内容不能为空");
     return;
   }
+  const requestedScope: SearchScope = searchAllOpenFilesEnabled() ? "open" : "current";
   if (
     !state.results ||
     state.results.total === 0 ||
+    state.searchScope !== requestedScope ||
     state.searchQuery !== query ||
-    state.searchSignature !== currentSearchSignature(state.searchScope ?? "current")
+    state.searchSignature !== currentSearchSignature(requestedScope)
   ) {
     await rerunSearchForNavigation();
     return;
@@ -4951,11 +5017,7 @@ function navigateMarkdownSearch(delta: number) {
 }
 
 async function rerunSearchForNavigation() {
-  if (state.searchScope === "open") {
-    findOpenDocuments();
-    return;
-  }
-  findCurrent(false);
+  findSelectedDocuments(false, true, true);
 }
 
 async function navigateSearchResult(delta: number) {
@@ -5004,7 +5066,24 @@ async function openSearchResult(index: number) {
     scrollActiveResultIntoView();
     return;
   }
-  await openResult(item.path, item.match.line, item.match.column);
+  const targetDocument = await openResult(item.path, item.match.line, item.match.column);
+  if (targetDocument && isMarkdownWysiwygActive(targetDocument)) {
+    const targetEditor = await ensureMarkdownEditor(targetDocument);
+    const targetHit = state.results?.hits.find((hit) => hit.path === item.path);
+    const localIndex = targetHit?.matches.findIndex((match) =>
+      match.line === item.match.line
+      && match.column === item.match.column
+      && match.matchedText === item.match.matchedText
+    ) ?? -1;
+    if (targetEditor && localIndex >= 0) {
+      targetEditor.search(editorSearchQuery(state.searchQuery), {
+        ...markdownSearchOptions(),
+        selectionOnly: false,
+        highlightIndex: localIndex,
+      });
+      targetEditor.focus();
+    }
+  }
   renderSearchDecorations();
   scrollActiveResultIntoView();
 }
@@ -5072,7 +5151,7 @@ function replaceCurrentFile() {
     );
     window.requestAnimationFrame(() => {
       syncMarkdownModelFromEditor(doc);
-      findCurrent(false);
+      findSelectedDocuments(false, false);
     });
     log("当前文件替换 1 处");
     return;
@@ -5091,7 +5170,7 @@ function replaceCurrentFile() {
     () => null,
   );
   log("当前文件替换 1 处");
-  findCurrent(false);
+  findSelectedDocuments(false, false);
 }
 
 function replaceAllCurrentFile() {
@@ -5130,6 +5209,11 @@ function replaceAllCurrentFile() {
   model.pushEditOperations([], edits, () => null);
   log(`当前文件全部替换 ${edits.length} 处`);
   findCurrent(false);
+}
+
+function replaceAllSelectedDocuments() {
+  if (searchAllOpenFilesEnabled()) replaceOpenDocuments();
+  else replaceAllCurrentFile();
 }
 
 function currentReplaceContext() {
@@ -5183,8 +5267,15 @@ function replaceOpenDocuments() {
     log("替换需要查找内容");
     return;
   }
+  const patternError = searchPatternError(query);
+  setCurrentFindError(patternError);
+  if (patternError) {
+    log(patternError);
+    return;
+  }
   commitSearchHistory();
   commitReplaceHistory();
+  syncMarkdownModelFromEditor(activeDocument());
 
   let total = 0;
   let skipped = 0;
@@ -5201,7 +5292,7 @@ function replaceOpenDocuments() {
       ($("matchCaseInput") as HTMLInputElement).checked,
       null,
       true,
-    ).filter((match) => matchAllowed(doc, match));
+    ).filter((match) => matchAllowed(doc, match, false));
     const edits = matches
       .map((match) => ({
         range: match.range,
@@ -5214,7 +5305,7 @@ function replaceOpenDocuments() {
       total += edits.length;
     }
   }
-  findOpenDocuments();
+  findOpenDocuments(true, false, false);
   log(`打开文档替换 ${total} 处${skipped ? `，跳过 ${skipped} 个只读文档` : ""}`);
 }
 
@@ -5390,7 +5481,7 @@ function searchReplaceRequest(root: string, query: string, replacement: string) 
   };
 }
 
-function modelMatches(doc: OpenDocument): TextMatchDto[] {
+function modelMatches(doc: OpenDocument, allowSelection = true): TextMatchDto[] {
   const query = ($("findInput") as HTMLInputElement).value;
   const mode = getSearchMode();
   const matches = doc.model.findMatches(
@@ -5400,7 +5491,7 @@ function modelMatches(doc: OpenDocument): TextMatchDto[] {
     ($("matchCaseInput") as HTMLInputElement).checked,
     null,
     true,
-  ).filter((match) => matchAllowed(doc, match));
+  ).filter((match) => matchAllowed(doc, match, allowSelection));
   return matches.map((match) => {
     const line = doc.model.getLineContent(match.range.startLineNumber);
     return {
@@ -5414,9 +5505,9 @@ function modelMatches(doc: OpenDocument): TextMatchDto[] {
   });
 }
 
-function matchAllowed(doc: OpenDocument, match: monaco.editor.FindMatch) {
+function matchAllowed(doc: OpenDocument, match: monaco.editor.FindMatch, allowSelection = true) {
   const selectedRange = activeSearchSelectionRange(doc);
-  if (($("searchSelectionInput") as HTMLInputElement).checked && !isMarkdownWysiwygActive(doc)) {
+  if (allowSelection && ($("searchSelectionInput") as HTMLInputElement).checked && !isMarkdownWysiwygActive(doc)) {
     if (!selectedRange || !rangeContainsRange(selectedRange, match.range)) return false;
   }
   if (!($("wholeWordInput") as HTMLInputElement).checked) return true;
@@ -5632,6 +5723,7 @@ function resolveShellFontStack() {
   if (state.shellFontMode === "custom") {
     return normalizeFontStack(state.shellFontCustom, SHELL_FONT_STACKS[DEFAULT_SHELL_FONT_PRESET]);
   }
+  if (state.shellFontPreset === "system" && isMacOSRuntime) return MACOS_SYSTEM_FONT_STACK;
   return SHELL_FONT_STACKS[state.shellFontPreset] ?? SHELL_FONT_STACKS[DEFAULT_SHELL_FONT_PRESET];
 }
 
@@ -5846,7 +5938,9 @@ function renderTabs() {
     tab.dataset.documentId = String(item.id);
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", String(active));
+    tab.setAttribute("aria-grabbed", "false");
     tab.tabIndex = active ? 0 : -1;
+    tab.draggable = true;
     tab.title = item.path || item.title;
     const icon = document.createElement("span");
     icon.className = "tab-icon-wrap";
@@ -5857,6 +5951,7 @@ function renderTabs() {
     const close = document.createElement("button");
     close.className = "tab-close";
     close.type = "button";
+    close.draggable = false;
     close.title = `关闭 ${item.title}`;
     close.setAttribute("aria-label", `关闭 ${item.title}`);
     close.innerHTML = iconSvg("X");
@@ -5865,6 +5960,41 @@ function renderTabs() {
       void closeDocument(item.id);
     });
     tab.addEventListener("click", () => activateDocument(item.id));
+    tab.addEventListener("dragstart", (event) => {
+      if ((event.target as HTMLElement).closest(".tab-close")) {
+        event.preventDefault();
+        return;
+      }
+      draggedTabDocumentId = item.id;
+      tab.setAttribute("aria-grabbed", "true");
+      event.dataTransfer?.setData("text/plain", String(item.id));
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+      window.requestAnimationFrame(() => tab.classList.add("dragging"));
+    });
+    tab.addEventListener("dragover", (event) => {
+      if (draggedTabDocumentId === null || draggedTabDocumentId === item.id) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      clearTabDropIndicators();
+      const rect = tab.getBoundingClientRect();
+      const placeAfter = shouldPlaceTabAfter(draggedTabDocumentId, item.id, event.clientX, rect);
+      tab.classList.add(placeAfter ? "drop-after" : "drop-before");
+    });
+    tab.addEventListener("dragleave", (event) => {
+      const relatedTarget = event.relatedTarget;
+      if (relatedTarget instanceof Node && tab.contains(relatedTarget)) return;
+      tab.classList.remove("drop-before", "drop-after");
+    });
+    tab.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const sourceId = draggedTabDocumentId;
+      const rect = tab.getBoundingClientRect();
+      const placeAfter = sourceId !== null && shouldPlaceTabAfter(sourceId, item.id, event.clientX, rect);
+      finishTabDrag();
+      if (sourceId !== null) reorderDocumentTabs(sourceId, item.id, placeAfter);
+    });
+    tab.addEventListener("dragend", finishTabDrag);
     tab.addEventListener("mousedown", (event) => {
       if (event.button === 1) event.preventDefault();
     });
@@ -5892,6 +6022,44 @@ function renderTabs() {
   }
   tabs.scrollLeft = previousScrollLeft;
   revealActiveTab();
+}
+
+function clearTabDropIndicators() {
+  $("tabs").querySelectorAll(".drop-before, .drop-after").forEach((tab) => {
+    tab.classList.remove("drop-before", "drop-after");
+  });
+}
+
+function finishTabDrag() {
+  draggedTabDocumentId = null;
+  clearTabDropIndicators();
+  $("tabs").querySelectorAll<HTMLElement>(".tab").forEach((tab) => {
+    tab.classList.remove("dragging");
+    tab.setAttribute("aria-grabbed", "false");
+  });
+}
+
+function shouldPlaceTabAfter(sourceId: number, targetId: number, clientX: number, rect: DOMRect) {
+  const midpoint = rect.left + rect.width / 2;
+  if (Math.abs(clientX - midpoint) > 4) return clientX > midpoint;
+  const sourceIndex = state.documents.findIndex((doc) => doc.id === sourceId);
+  const targetIndex = state.documents.findIndex((doc) => doc.id === targetId);
+  return sourceIndex >= 0 && targetIndex >= 0 && sourceIndex < targetIndex;
+}
+
+function reorderDocumentTabs(sourceId: number, targetId: number, placeAfter: boolean) {
+  if (sourceId === targetId) return;
+  const sourceIndex = state.documents.findIndex((doc) => doc.id === sourceId);
+  if (sourceIndex < 0) return;
+  const [source] = state.documents.splice(sourceIndex, 1);
+  const targetIndex = state.documents.findIndex((doc) => doc.id === targetId);
+  if (targetIndex < 0) {
+    state.documents.splice(sourceIndex, 0, source);
+    return;
+  }
+  state.documents.splice(targetIndex + (placeAfter ? 1 : 0), 0, source);
+  renderTabs();
+  scheduleSessionSave();
 }
 
 function renderChrome() {
@@ -6058,7 +6226,7 @@ function renderWorkspace() {
   workspace.classList.toggle("panel-collapsed", inWorkspaceMode && !state.showDirectory);
   $("directoryToggle").classList.toggle("active", inWorkspaceMode && state.showDirectory);
   if (!state.workspace) {
-    $("tree").innerHTML = `<div class="empty">未打开目录</div>`;
+    $("tree").innerHTML = `<div class="empty">还没有打开目录，带水獭去看看吧</div>`;
     return;
   }
   $("workspaceTitle").textContent = state.workspace.name.toUpperCase();
@@ -6067,7 +6235,7 @@ function renderWorkspace() {
 
 function renderWorkspaceTree() {
   if (!state.workspace) {
-    $("tree").innerHTML = `<div class="empty">鏈墦寮€鐩綍</div>`;
+    $("tree").innerHTML = `<div class="empty">还没有打开目录，带水獭去看看吧</div>`;
     return;
   }
   const activePath = activeDocument().path;
@@ -6075,7 +6243,7 @@ function renderWorkspaceTree() {
 }
 
 function renderTreeRows(items: TreeItemDto[], activePath: string | null | undefined) {
-  if (items.length === 0) return `<div class="empty compact">空文件夹</div>`;
+  if (items.length === 0) return `<div class="empty compact">这个文件夹空空的</div>`;
   const rows: string[] = [];
   items.forEach((item, index) => {
     const kind = item.isDir ? "dir" : "file";
@@ -6092,7 +6260,7 @@ function renderTreeRows(items: TreeItemDto[], activePath: string | null | undefi
     const next = items[index + 1];
     if (expanded && (!next || next.depth <= item.depth)) {
       rows.push(
-        `<div class="tree-empty-row" style="--tree-depth:${item.depth + 1}">空文件夹</div>`,
+        `<div class="tree-empty-row" style="--tree-depth:${item.depth + 1}">这个文件夹空空的</div>`,
       );
     }
   });
@@ -6195,6 +6363,7 @@ function renderSettingsMenu() {
   setSegmentedValue("settingsKeymapProfileControl", state.keymapProfile);
   setSegmentedValue("settingsMarkdownWidthControl", state.markdownContentWidth);
   setSegmentedValue("settingsMarkdownControl", state.markdownEditMode);
+  setSegmentedValue("settingsDoubleClickDocumentControl", state.doubleClickDocumentType);
   setSegmentedValue("settingsModeControl", state.mode === "workspace" && state.workspace ? "workspace" : "single");
   renderAppUpdateStatus();
   $("keymapProfileDetail").textContent = keymapProfileDetail();
@@ -6282,7 +6451,7 @@ function setFontInputValue(id: string, value: string, active: boolean) {
 function renderRecentFiles() {
   const list = $("recentList");
   if (state.recentWorkspaces.length === 0 && state.recentFiles.length === 0) {
-    list.innerHTML = `<div class="empty">暂无最近打开记录</div>`;
+    list.innerHTML = `<div class="empty">还没有留下足迹，先打开一个文件吧</div>`;
     return;
   }
   list.innerHTML = "";
@@ -6682,6 +6851,10 @@ function isMarkdownContentWidth(value: unknown): value is MarkdownContentWidth {
   return value === "typora" || value === "compact" || value === "wide" || value === "full";
 }
 
+function isDoubleClickDocumentType(value: unknown): value is DoubleClickDocumentType {
+  return value === "txt" || value === "md";
+}
+
 function whitespaceLabel(value: RenderWhitespaceMode) {
   if (value === "all") return "全部";
   if (value === "selection") return "选区";
@@ -6768,7 +6941,7 @@ function renderSearchSidebarResults() {
         : "正在搜索文件";
     title.textContent = state.workspaceSearchStatus === "searching" ? "搜索结果" : "替换预览";
     summary.textContent = label;
-    body.innerHTML = `<div class="workspace-search-progress" role="status">${iconSvg("LoaderCircle")}<strong>${label}</strong><span>正在扫描目录，请稍候…</span></div><div class="search-skeleton" aria-hidden="true">${Array.from({ length: 5 }, () => `<span></span>`).join("")}</div>`;
+    body.innerHTML = `<div class="workspace-search-progress" role="status">${iconSvg("LoaderCircle")}<strong>${label}</strong><span>水獭正在扫描目录，请稍候…</span></div><div class="search-skeleton" aria-hidden="true">${Array.from({ length: 5 }, () => `<span></span>`).join("")}</div>`;
     return;
   }
   if (state.workspaceSearchStatus === "error") {
@@ -6787,8 +6960,8 @@ function renderSearchSidebarResults() {
         body.innerHTML = `<div class="find-result-empty"><button class="tool-button" id="clearReplacePreviewButton">${iconSvg("X")}<span>清除预览</span></button></div>`;
         $("clearReplacePreviewButton").addEventListener("click", clearReplacePreview);
       } else {
-        summary.textContent = "暂无结果";
-        body.innerHTML = `<div class="empty">暂无替换预览</div>`;
+        summary.textContent = "等待预览";
+        body.innerHTML = `<div class="empty">还没有生成替换预览</div>`;
       }
       return;
     }
@@ -6812,13 +6985,13 @@ function renderSearchSidebarResults() {
   }
   title.textContent = "搜索结果";
   if (!state.results) {
-    summary.textContent = "暂无结果";
-    body.innerHTML = `<div class="empty">暂无查找结果</div>`;
+    summary.textContent = "等待搜索";
+    body.innerHTML = `<div class="empty">输入关键词，让水獭帮你捞出线索</div>`;
     return;
   }
   if (state.results.total === 0) {
     summary.textContent = searchReportSummary(state.results);
-    body.innerHTML = `<div class="find-result-empty"><span>没有命中，可检查大小写、全词或文件过滤。</span><button class="tool-button" id="clearResultsButton">${iconSvg("X")}<span>清除</span></button></div>`;
+    body.innerHTML = `<div class="find-result-empty"><span>这次没捞到内容，可检查大小写、全词或文件过滤。</span><button class="tool-button" id="clearResultsButton">${iconSvg("X")}<span>清除</span></button></div>`;
     $("clearResultsButton").addEventListener("click", clearSearchResults);
     return;
   }
@@ -6878,7 +7051,7 @@ function retryWorkspaceSearch() {
 }
 
 function searchReportSummary(report: SearchReportDto) {
-  const parts = [`${report.total} 处`, `${report.hits.length} 个文件`];
+  const parts = [`捞出 ${report.total} 处`, `${report.hits.length} 个文件`];
   if (report.filesScanned !== undefined) parts.push(`扫描 ${report.filesScanned}`);
   if (report.elapsedMs !== undefined) parts.push(formatSearchDuration(report.elapsedMs));
   return parts.join(" · ");
@@ -7012,13 +7185,13 @@ function renderMarkdownOutline() {
       line: locations[index]?.line ?? 1,
     }))
     : locations;
-  summary.textContent = headings.length > 0 ? `${headings.length} 个标题` : "暂无标题";
+  summary.textContent = headings.length > 0 ? `${headings.length} 个标题` : "还没有标题";
   list.innerHTML = headings.length > 0
     ? headings.map((heading, index) => {
       const indent = (heading.level - 1) * 14;
       return `<button class="outline-row" role="treeitem" aria-level="${heading.level}" data-outline-line="${heading.line}" data-outline-index="${index}" data-outline-level="${heading.level}" style="--outline-indent:${indent}px"><span>${escapeHtml(heading.text)}</span><small>${heading.line}</small></button>`;
     }).join("")
-    : `<div class="empty">当前 Markdown 文档没有标题</div>`;
+    : `<div class="empty">这篇 Markdown 还没有标题</div>`;
   list.querySelectorAll<HTMLButtonElement>("[data-outline-line]").forEach((button) => {
     button.addEventListener("click", () => {
       if (isMarkdownWysiwygActive() && markdownEditor) {
@@ -7035,13 +7208,21 @@ function renderMarkdownOutline() {
 }
 
 async function openResult(path: string, line: number, column: number) {
-  const current = activeDocument();
-  if (current.path !== path && current.title !== path) {
+  const openDocument = state.documents.find((doc) => doc.path === path || (!doc.path && doc.title === path));
+  if (openDocument && openDocument.id !== state.activeId) {
+    activateDocument(openDocument.id);
+  } else if (!openDocument) {
     await openPath(path);
+  }
+  const current = activeDocument();
+  if (isMarkdownWysiwygActive(current)) {
+    (await ensureMarkdownEditor(current))?.focus();
+    return current;
   }
   editor.revealPositionInCenter({ lineNumber: line, column });
   editor.setPosition({ lineNumber: line, column });
   editor.focus();
+  return current;
 }
 
 function renderSearchDecorations() {
@@ -7770,6 +7951,7 @@ function setFindView(view: FindView, persist = true) {
   toggleCheckRow("reverseSearchInput", !workspaceVisible);
   toggleCheckRow("wrapSearchInput", !workspaceVisible);
   toggleCheckRow("searchSelectionInput", !workspaceVisible);
+  toggleCheckRow("allOpenFilesInput", !workspaceVisible);
 
   toggleAction("findNextButton", view === "find");
   toggleAction("findPreviousButton", view === "find");
@@ -7797,6 +7979,10 @@ function toggleAction(id: string, visible: boolean) {
 
 function isWorkspaceFindView(view = state.findView) {
   return view === "workspace-find" || view === "workspace-replace";
+}
+
+function searchAllOpenFilesEnabled() {
+  return ($("allOpenFilesInput") as HTMLInputElement).checked;
 }
 
 function toggleFindOpen(options: { prefillFromSelection?: boolean } = {}) {
@@ -7845,7 +8031,7 @@ function scheduleCurrentFind() {
     }
     const input = $("currentFindInput") as HTMLInputElement;
     const keepInputFocus = document.activeElement === input;
-    findCurrent(false, false);
+    findSelectedDocuments(false, false, false);
     if (keepInputFocus) input.focus();
   }, 90);
 }
@@ -7856,6 +8042,7 @@ function syncSearchControlsToCurrent() {
   ($("currentMatchCaseInput") as HTMLInputElement).checked = ($("matchCaseInput") as HTMLInputElement).checked;
   ($("currentWholeWordInput") as HTMLInputElement).checked = ($("wholeWordInput") as HTMLInputElement).checked;
   ($("currentRegexInput") as HTMLInputElement).checked = getSearchMode() === "regex";
+  ($("currentAllOpenFilesInput") as HTMLInputElement).checked = searchAllOpenFilesEnabled();
   renderCurrentFindMode();
   renderCurrentFindCount();
 }
@@ -7866,6 +8053,7 @@ function syncCurrentFindControls() {
   ($("matchCaseInput") as HTMLInputElement).checked = ($("currentMatchCaseInput") as HTMLInputElement).checked;
   ($("wholeWordInput") as HTMLInputElement).checked = ($("currentWholeWordInput") as HTMLInputElement).checked;
   setSearchMode(($("currentRegexInput") as HTMLInputElement).checked ? "regex" : "literal");
+  ($("allOpenFilesInput") as HTMLInputElement).checked = ($("currentAllOpenFilesInput") as HTMLInputElement).checked;
   scheduleSessionSave();
 }
 
@@ -7874,20 +8062,49 @@ function renderCurrentFindMode() {
   $("currentReplaceInput").classList.toggle("hidden", !replace);
   $("currentReplaceButton").classList.toggle("hidden", !replace);
   $("currentReplaceAllButton").classList.toggle("hidden", !replace);
+  renderSearchScopeControls();
+}
+
+function renderSearchScopeControls() {
+  const allOpenFiles = searchAllOpenFilesEnabled();
+  ($("currentAllOpenFilesInput") as HTMLInputElement).checked = allOpenFiles;
+  $("currentFindCount").classList.toggle("multi-file", allOpenFiles);
+  const selectionInput = $<HTMLInputElement>("searchSelectionInput");
+  selectionInput.disabled = allOpenFiles;
+  const selectionLabel = selectionInput.closest("label");
+  selectionLabel?.classList.toggle("scope-disabled", allOpenFiles);
+  if (selectionLabel) selectionLabel.title = allOpenFiles ? "多文件搜索不使用当前选区" : "选取范围内";
+
+  const findLabel = allOpenFiles ? "查找全部打开文件" : "全部查找";
+  const replaceAllLabel = allOpenFiles ? "替换全部打开文件" : "全部替换";
+  const findButtonLabel = $("findCurrentButton").querySelector<HTMLElement>(":scope > span:last-child");
+  const replaceButtonLabel = $("replaceAllCurrentButton").querySelector<HTMLElement>(":scope > span:last-child");
+  if (findButtonLabel) findButtonLabel.textContent = findLabel;
+  if (replaceButtonLabel) replaceButtonLabel.textContent = replaceAllLabel;
+  $("findCurrentButton").title = findLabel;
+  $("replaceAllCurrentButton").title = replaceAllLabel;
+  $("currentFindAllButton").title = findLabel;
+  $("currentFindAllButton").setAttribute("aria-label", findLabel);
+  $("currentReplaceAllButton").title = replaceAllLabel;
+  $("currentReplaceAllButton").setAttribute("aria-label", replaceAllLabel);
 }
 
 function renderCurrentFindCount() {
-  const currentResults = state.searchScope === "current" ? state.results : null;
+  const selectedScope: SearchScope = searchAllOpenFilesEnabled() ? "open" : "current";
+  const currentResults = state.searchScope === selectedScope ? state.results : null;
   if (!currentResults || currentResults.total === 0) {
     $("currentFindCount").textContent = "0 个结果";
     return;
   }
   const active = state.activeResultIndex >= 0 ? state.activeResultIndex + 1 : 0;
-  $("currentFindCount").textContent = active > 0 ? `${active}/${currentResults.total}` : `${currentResults.total} 个结果`;
+  const count = active > 0 ? `${active}/${currentResults.total}` : `${currentResults.total} 个结果`;
+  $("currentFindCount").textContent = selectedScope === "open"
+    ? `${count} · ${currentResults.hits.length} 文件`
+    : count;
 }
 
-function currentSearchPatternError(query: string) {
-  if (!(($("currentRegexInput") as HTMLInputElement).checked) || !query) return "";
+function searchPatternError(query: string) {
+  if (getSearchMode() !== "regex" || !query) return "";
   try {
     const expression = new RegExp(query);
     return expression.test("") ? "正则表达式不能匹配空字符串" : "";
@@ -8052,7 +8269,7 @@ function renderRightSidebar() {
 }
 
 function hasCurrentSearchResults() {
-  return state.searchScope === "current" && state.results !== null;
+  return (state.searchScope === "current" || state.searchScope === "open") && state.results !== null;
 }
 
 function selectedEditorTextForFind() {
@@ -8923,6 +9140,9 @@ async function restoreSession() {
     state.markdownContentWidth = isMarkdownContentWidth(snapshot.markdownContentWidth)
       ? snapshot.markdownContentWidth
       : "typora";
+    state.doubleClickDocumentType = isDoubleClickDocumentType(snapshot.doubleClickDocumentType)
+      ? snapshot.doubleClickDocumentType
+      : "txt";
     state.wordWrap = snapshot.wordWrap ?? state.wordWrap;
     state.minimap = snapshot.minimap ?? state.minimap;
     state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
@@ -8997,6 +9217,7 @@ async function restoreSession() {
     if (restoredCount + restoredDraftCount > 0 && placeholder && state.documents.length > 1) {
       state.documents = state.documents.filter((doc) => doc !== placeholder);
     }
+    restoreDocumentOrder(snapshot.documentOrder);
     const active = snapshot.activePath
       ? state.documents.find((doc) => doc.path === snapshot.activePath)
       : snapshot.activeDraftId
@@ -9090,6 +9311,8 @@ function applySearchSnapshot(snapshot: Partial<SessionSnapshot>) {
   ($("reverseSearchInput") as HTMLInputElement).checked = snapshot.reverseSearch ?? false;
   ($("wrapSearchInput") as HTMLInputElement).checked = snapshot.wrapSearch ?? true;
   ($("searchSelectionInput") as HTMLInputElement).checked = snapshot.searchSelection ?? false;
+  ($("allOpenFilesInput") as HTMLInputElement).checked = snapshot.searchAllOpenFiles ?? false;
+  ($("currentAllOpenFilesInput") as HTMLInputElement).checked = snapshot.searchAllOpenFiles ?? false;
   ($("recursiveInput") as HTMLInputElement).checked = snapshot.recursive ?? true;
   ($("includeHiddenInput") as HTMLInputElement).checked = snapshot.includeHidden ?? false;
   ($("fileGlobInput") as HTMLInputElement).value = snapshot.fileGlob || "*.*";
@@ -9127,6 +9350,22 @@ function ensureDraftId(doc: OpenDocument) {
 
 function documentSessionKey(doc: OpenDocument) {
   return doc.path ? `file:${doc.path}` : `draft:${ensureDraftId(doc)}`;
+}
+
+function restoreDocumentOrder(order: unknown) {
+  if (!Array.isArray(order)) return;
+  const positions = new globalThis.Map(
+    order
+      .filter((key): key is string => typeof key === "string")
+      .map((key, index) => [key, index]),
+  );
+  const fallbackPositions = new globalThis.Map(state.documents.map((doc, index) => [doc.id, index]));
+  state.documents.sort((left, right) => {
+    const leftPosition = positions.get(documentSessionKey(left));
+    const rightPosition = positions.get(documentSessionKey(right));
+    return (leftPosition ?? positions.size + (fallbackPositions.get(left.id) ?? 0))
+      - (rightPosition ?? positions.size + (fallbackPositions.get(right.id) ?? 0));
+  });
 }
 
 function restoredDocumentOrigin(path: string, snapshot: Partial<SessionSnapshot>): DocumentOrigin {
@@ -9173,9 +9412,10 @@ async function saveSession() {
   if (activeBeforeSave) activeBeforeSave.viewState = editor.saveViewState() ?? undefined;
   const active = activeDocument();
   const snapshot: SessionSnapshot = {
-    version: 8,
+    version: 9,
     openFiles: uniquePaths(state.documents.flatMap((doc) => (doc.path ? [doc.path] : []))),
     draftDocuments: draftDocumentSnapshots(),
+    documentOrder: state.documents.map(documentSessionKey),
     documentOrigins: Object.fromEntries(
       state.documents.map((doc) => [documentSessionKey(doc), doc.origin]),
     ),
@@ -9205,6 +9445,7 @@ async function saveSession() {
     treeScrollTop: $("tree").scrollTop,
     markdownEditMode: state.markdownEditMode,
     markdownContentWidth: state.markdownContentWidth,
+    doubleClickDocumentType: state.doubleClickDocumentType,
     searchHistory: state.searchHistory.slice(0, 30),
     replaceHistory: state.replaceHistory.slice(0, 30),
     searchFavorites: state.searchFavorites.slice(0, 30),
@@ -9231,6 +9472,7 @@ async function saveSession() {
     reverseSearch: ($("reverseSearchInput") as HTMLInputElement).checked,
     wrapSearch: ($("wrapSearchInput") as HTMLInputElement).checked,
     searchSelection: ($("searchSelectionInput") as HTMLInputElement).checked,
+    searchAllOpenFiles: searchAllOpenFilesEnabled(),
     recursive: ($("recursiveInput") as HTMLInputElement).checked,
     includeHidden: ($("includeHiddenInput") as HTMLInputElement).checked,
     fileGlob: ($("fileGlobInput") as HTMLInputElement).value || "*.*",
