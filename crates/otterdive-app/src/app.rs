@@ -1151,8 +1151,9 @@ fn rename_file_in_place(path: &Path, requested_name: &str) -> Result<PathBuf, St
 
 #[cfg(test)]
 mod tests {
-    use super::rename_file_in_place;
+    use super::{SUPPORTED_LANGUAGES, language_from_path, rename_file_in_place};
     use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_test_dir(label: &str) -> std::path::PathBuf {
@@ -1179,6 +1180,25 @@ mod tests {
         );
         assert!(!source.exists());
         fs::remove_dir_all(&dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn language_detection_covers_common_source_and_extensionless_files() {
+        let cases = [
+            ("src/main.tsx", "typescript"),
+            ("scripts/check.py", "python"),
+            ("config/settings.toml", "toml"),
+            ("schema.graphql", "graphql"),
+            ("include/header.hpp", "cpp"),
+            ("services/api/Dockerfile", "dockerfile"),
+            ("Makefile", "shell"),
+        ];
+
+        for (path, expected) in cases {
+            let language = language_from_path(Some(Path::new(path)));
+            assert_eq!(language, expected, "unexpected language for {path}");
+            assert!(SUPPORTED_LANGUAGES.contains(&language.as_str()));
+        }
     }
 
     #[test]

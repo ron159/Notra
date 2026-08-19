@@ -24,7 +24,8 @@ Large logs, cross-file searches, and complex rule analysis often force you to ju
 ## ✨ Feature Highlights
 
 - 📂 **Files and workspaces**: Open content in single-file or workspace mode by selecting or dragging files and folders.
-- ✍️ **Monaco editing experience**: Get syntax highlighting, completion, folding, bracket matching, and multiple cursors; files above the editable-size threshold open in protected read-only mode.
+- ✍️ **Monaco editing experience**: Detect dozens of languages by file name and extension, with syntax highlighting, completion, folding, bracket matching, and multiple cursors; files above the editable-size threshold open in protected read-only mode.
+- 🧹 **Local code formatting**: Format JavaScript, TypeScript, JSX, TSX, JSON, JSONC, Markdown, TOML, Python, and Dockerfile content with bundled dprint WASM plugins, plus dedicated SQL formatting, without runtime network access.
 - ⌨️ **Familiar keybindings**: Choose the built-in VS Code or Notepad++ profile, browse commands by group, and customize bindings.
 - 📝 **Complete Markdown workflow**: Use instant editing, source and split-preview modes, outlines, tables, task lists, math, remote images, Mermaid, PlantUML, and Vega diagrams.
 - 🔎 **Multi-scope search**: Search the current file, all open documents, or an entire workspace with normal, extended, and regular-expression modes, result navigation, and replacement previews.
@@ -94,4 +95,4 @@ OtterDive is released under the [MIT License](LICENSE).
 
 OtterDive is a search-enhanced edition of the upstream [Notra](https://github.com/syscryer/Notra) project. It builds on Notra with a stronger focus on workspace search, regular expressions, Analyse, logs, and large-text workflows. We thank the original Notra authors and contributors for the product and engineering foundation.
 
-The instant Markdown experience evolves from the [MarkText](https://github.com/marktext/marktext) Muya editor. Its pinned upstream revision and licenses are kept in `crates/otterdive-app/frontend/vendor/marktext-muya`. Code editing is powered by [Monaco Editor](https://github.com/microsoft/monaco-editor). We thank these upstream projects and their contributors; all third-party dependencies remain subject to their respective licenses.
+The instant Markdown experience evolves from the [MarkText](https://github.com/marktext/marktext) Muya editor. Its pinned upstream revision and licenses are kept in `crates/otterdive-app/frontend/vendor/marktext-muya`. Code editing is powered by [Monaco Editor](https://github.com/microsoft/monaco-editor), with multi-language formatting provided by [dprint](https://dprint.dev/) WASM plugins. We thank these upstream projects and their contributors; all third-party dependencies remain subject to their respective licenses.
