@@ -8,3 +8,8 @@ declare module "*?worker" {
   };
   export default WorkerFactory;
 }
+
+declare module "monaco-editor/esm/vs/basic-languages/markdown/markdown" {
+  export const conf: import("monaco-editor/esm/vs/editor/editor.api").languages.LanguageConfiguration;
+  export const language: import("monaco-editor/esm/vs/editor/editor.api").languages.IMonarchLanguage;
+}

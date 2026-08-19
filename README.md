@@ -24,7 +24,8 @@ OtterDive 是一个面向文本、日志、Markdown 和代码的本地优先桌�
 ## ✨ 功能亮点
 
 - 📂 **文件与工作区**：以单文件或工作区模式打开内容，支持直接选择或拖放文件和目录。
-- ✍️ **Monaco 编辑体验**：提供多语言高亮、代码提示、折叠、括号匹配和多光标；超过可编辑阈值的文件会以只读保护方式打开。
+- ✍️ **Monaco 编辑体验**：按文件名和扩展名识别数十种语言，提供高亮、代码提示、折叠、括号匹配和多光标；超过可编辑阈值的文件会以只读保护方式打开。
+- 🧹 **本地代码格式化**：使用随应用打包的 dprint WASM 格式化 JavaScript、TypeScript、JSX、TSX、JSON、JSONC、Markdown、TOML、Python 与 Dockerfile，并提供 SQL 专用格式化；运行时无需联网。
 - ⌨️ **熟悉的快捷键**：内置 VS Code 与 Notepad++ 两套方案，可按命令分组查看并自定义按键绑定。
 - 📝 **完整的 Markdown 工作流**：支持即时编辑、源码与分屏预览，以及大纲、表格、任务列表、数学公式、网络图片、Mermaid、PlantUML 和 Vega 图表。
 - 🔎 **多范围搜索**：搜索当前文件、全部已打开文档或整个工作区，支持普通、扩展和正则表达式模式、结果导航与替换预览。
@@ -94,4 +95,4 @@ OtterDive 使用 [MIT License](LICENSE) 开源。
 
 OtterDive 基于上游项目 [Notra](https://github.com/syscryer/Notra) 演进，是对原项目的搜索增强版本，重点加强了工作区搜索、Regex、Analyse、日志与大文本处理工作流。感谢 Notra 原作者和贡献者打下的产品与工程基础。
 
-Markdown 即时编辑能力基于 [MarkText](https://github.com/marktext/marktext) 的 Muya 编辑器演进，固定的上游版本和许可证保留在 `crates/otterdive-app/frontend/vendor/marktext-muya`。代码编辑能力由 [Monaco Editor](https://github.com/microsoft/monaco-editor) 提供。感谢这些上游项目及其贡献者；各第三方依赖继续遵循其各自许可证。
+Markdown 即时编辑能力基于 [MarkText](https://github.com/marktext/marktext) 的 Muya 编辑器演进，固定的上游版本和许可证保留在 `crates/otterdive-app/frontend/vendor/marktext-muya`。代码编辑能力由 [Monaco Editor](https://github.com/microsoft/monaco-editor) 提供，多语言格式化基于 [dprint](https://dprint.dev/) WASM 插件。感谢这些上游项目及其贡献者；各第三方依赖继续遵循其各自许可证。

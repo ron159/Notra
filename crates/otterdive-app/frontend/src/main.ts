@@ -119,6 +119,17 @@ import {
   type KeymapProfile,
 } from "./keybindings";
 import {
+  PINNED_LANGUAGES,
+  languageFromFilePath as resolveLanguageFromFilePath,
+  type LanguageEntry,
+} from "./languageSupport";
+import {
+  DPRINT_LANGUAGES,
+  formatterFilePath,
+  preserveTrailingNewline,
+  supportsDprintLanguage,
+} from "./formatterSupport";
+import {
   createAnalysePanel,
   type AnalysePanelController,
   type AnalysePanelSettings,
@@ -130,10 +141,17 @@ import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
 import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
 import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import "monaco-editor/esm/vs/basic-languages/monaco.contribution";
+import {
+  conf as markdownConfiguration,
+  language as markdownTokens,
+} from "monaco-editor/esm/vs/basic-languages/markdown/markdown";
 import "monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations";
 import "monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching";
 import "monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter";
+import "monaco-editor/esm/vs/language/css/monaco.contribution";
+import "monaco-editor/esm/vs/language/html/monaco.contribution";
 import "monaco-editor/esm/vs/language/json/monaco.contribution";
+import "monaco-editor/esm/vs/language/typescript/monaco.contribution";
 import "./styles.css";
 
 type EncodingLabel =
@@ -271,7 +289,7 @@ interface AppCommand {
   priority?: number;
 }
 
-interface SqlFormatWorkerResponse {
+interface FormatWorkerResponse {
   id: number;
   text?: string;
   error?: string;
@@ -370,39 +388,19 @@ window.MonacoEnvironment = {
   },
 };
 
-type LanguageEntry = readonly [string, string, string];
 type MonacoLanguage = ReturnType<typeof monaco.languages.getLanguages>[number];
-
-const pinnedLanguages: LanguageEntry[] = [
-  ["plaintext", "Plain Text", "txt"],
-  ["markdown", "Markdown", "md"],
-  ["mdx", "MDX", "mdx"],
-  ["json", "JSON", "json"],
-  ["toml", "TOML", "toml"],
-  ["yaml", "YAML", "yaml"],
-  ["sql", "SQL", "sql"],
-  ["powershell", "PowerShell", "ps1"],
-  ["javascript", "JavaScript", "js"],
-  ["typescript", "TypeScript", "ts"],
-  ["python", "Python", "py"],
-  ["xml", "XML", "xml"],
-  ["html", "HTML", "html"],
-  ["css", "CSS", "css"],
-  ["java", "Java", "java"],
-  ["rust", "Rust", "rs"],
-];
 
 let cachedLanguageOptions: LanguageEntry[] | null = null;
 
 function languageOptions(): LanguageEntry[] {
   if (cachedLanguageOptions) return cachedLanguageOptions;
-  const pinnedIds = new Set(pinnedLanguages.map(([id]) => id));
+  const pinnedIds = new Set(PINNED_LANGUAGES.map(([id]) => id));
   const discovered = monaco.languages
     .getLanguages()
     .filter((language) => !pinnedIds.has(language.id))
     .map((language) => [language.id, languageLabelFromRegistry(language), languageHintFromRegistry(language)] as const)
     .sort((a, b) => a[1].localeCompare(b[1], "en"));
-  cachedLanguageOptions = [...pinnedLanguages, ...discovered];
+  cachedLanguageOptions = [...PINNED_LANGUAGES, ...discovered];
   return cachedLanguageOptions;
 }
 
@@ -937,6 +935,12 @@ let tabScrollResizeObserver: ResizeObserver | null = null;
 let sqlFormatterWorker: Worker | null = null;
 let sqlFormatterRequestId = 0;
 const pendingSqlFormats = new globalThis.Map<number, {
+  resolve: (text: string) => void;
+  reject: (error: Error) => void;
+}>();
+let codeFormatterWorker: Worker | null = null;
+let codeFormatterRequestId = 0;
+const pendingCodeFormats = new globalThis.Map<number, {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
 }>();
@@ -4851,7 +4855,7 @@ function findCurrent(showPanel = false, recordHistory = true) {
     log("查找内容不能为空");
     return;
   }
-  const patternError = searchPatternError(query);
+  const patternError = currentSearchPatternError(query);
   setCurrentFindError(patternError);
   if (patternError) {
     resetSearchResults(true);
@@ -4906,7 +4910,7 @@ function findOpenDocuments(showPanel = false, recordHistory = true, navigateToIn
     log("查找内容不能为空");
     return;
   }
-  const patternError = searchPatternError(query);
+  const patternError = currentSearchPatternError(query);
   setCurrentFindError(patternError);
   if (patternError) {
     resetSearchResults(true);
@@ -4957,7 +4961,7 @@ function setSearchResults(
     renderRightSidebarToggle();
     scheduleSessionSave();
   }
-  if (scope === "workspace" || showPanel) openBottomResults("search");
+  if (scope !== "current" || showPanel) openBottomResults("search");
   renderSearchSidebarResults();
   renderCurrentFindCount();
   renderSearchDecorations();
@@ -5319,7 +5323,7 @@ function replaceOpenDocuments() {
     log("替换需要查找内容");
     return;
   }
-  const patternError = searchPatternError(query);
+  const patternError = currentSearchPatternError(query);
   setCurrentFindError(patternError);
   if (patternError) {
     log(patternError);
@@ -8155,7 +8159,7 @@ function renderCurrentFindCount() {
     : count;
 }
 
-function searchPatternError(query: string) {
+function currentSearchPatternError(query: string) {
   if (getSearchMode() !== "regex" || !query) return "";
   try {
     const expression = new RegExp(query);
@@ -8518,7 +8522,7 @@ function runEditorAction(actionId: string, successMessage?: string) {
 
 function isFormattingActionSupported(doc = activeDocument()) {
   if (!editor || isMarkdownWysiwygActive(doc)) return false;
-  if (doc.language === "json" || doc.language === "sql") return true;
+  if (doc.language === "sql" || supportsDprintLanguage(doc.language)) return true;
   return editor.getAction("editor.action.formatDocument")?.isSupported() ?? false;
 }
 
@@ -8532,21 +8536,13 @@ async function formatActiveDocument() {
   }
 
   const before = doc.model.getValue();
-  if (doc.language === "json" && before.trim()) {
-    try {
-      JSON.parse(before);
-    } catch (error) {
-      log(`JSON 格式化失败：${error instanceof Error ? error.message : String(error)}`);
-      return;
-    }
-  }
-
   if (!before.trim()) {
     log(`${languageLabel(doc.language)} 已是规范格式`);
     return;
   }
 
   try {
+    const version = doc.model.getVersionId();
     if (doc.language === "sql") {
       const options = doc.model.getOptions();
       const formatted = await withBusy(
@@ -8554,12 +8550,29 @@ async function formatActiveDocument() {
         () => formatSqlInWorker(before, options.tabSize, !options.insertSpaces),
         { lockEditor: false },
       );
-      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
-    } else if (doc.language === "json" && !action?.isSupported()) {
+      if (doc.model.isDisposed() || doc.model.getVersionId() !== version) {
+        log("文档内容已变化，已取消格式化");
+        return;
+      }
+      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model, before));
+    } else if (supportsDprintLanguage(doc.language)) {
       const options = doc.model.getOptions();
-      const indentation = options.insertSpaces ? options.tabSize : "\t";
-      const formatted = JSON.stringify(JSON.parse(before), null, indentation);
-      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model));
+      const formatted = await withBusy(
+        `正在格式化 ${languageLabel(doc.language)}`,
+        () => formatCodeInWorker(
+          doc.language,
+          formatterFilePath(doc.language, doc.path || doc.title),
+          before,
+          options.tabSize,
+          !options.insertSpaces,
+        ),
+        { lockEditor: false },
+      );
+      if (doc.model.isDisposed() || doc.model.getVersionId() !== version) {
+        log("文档内容已变化，已取消格式化");
+        return;
+      }
+      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model, before));
     } else {
       await action?.run();
     }
@@ -8571,8 +8584,8 @@ async function formatActiveDocument() {
   }
 }
 
-function normalizeFormattedText(text: string, model: monaco.editor.ITextModel) {
-  return text
+function normalizeFormattedText(text: string, model: monaco.editor.ITextModel, original = model.getValue()) {
+  return preserveTrailingNewline(text, original)
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/\n/g, model.getEOL());
@@ -9569,7 +9582,9 @@ function setThemeButton() {
 }
 
 function registerToml() {
-  monaco.languages.register({ id: "toml" });
+  if (!monaco.languages.getLanguages().some((language) => language.id === "toml")) {
+    monaco.languages.register({ id: "toml", aliases: ["TOML"], extensions: [".toml"] });
+  }
   monaco.languages.setMonarchTokensProvider("toml", {
     tokenizer: {
       root: [
@@ -9592,6 +9607,8 @@ function registerMdx() {
       extensions: [".mdx"],
     });
   }
+  monaco.languages.setLanguageConfiguration("mdx", markdownConfiguration);
+  monaco.languages.setMonarchTokensProvider("mdx", markdownTokens);
 }
 
 function registerCompletionProviders() {
@@ -9648,11 +9665,78 @@ function registerFormattingProviders() {
         { lockEditor: false },
       );
       if (token.isCancellationRequested || model.isDisposed() || model.getVersionId() !== version) return [];
-      const normalized = normalizeFormattedText(formatted, model);
+      const normalized = normalizeFormattedText(formatted, model, source);
       if (normalized === source) return [];
       return [{ range: model.getFullModelRange(), text: normalized }];
     },
   });
+
+  for (const language of DPRINT_LANGUAGES) {
+    monaco.languages.registerDocumentFormattingEditProvider(language, {
+      displayName: "OtterDive dprint Formatter",
+      async provideDocumentFormattingEdits(model, options, token) {
+        const source = model.getValue();
+        if (!source.trim()) return [];
+        const version = model.getVersionId();
+        const formatted = await withBusy(
+          `正在格式化 ${languageLabel(language)}`,
+          () => formatCodeInWorker(
+            language,
+            formatterFilePath(language, model.uri.path),
+            source,
+            options.tabSize,
+            !options.insertSpaces,
+          ),
+          { lockEditor: false },
+        );
+        if (token.isCancellationRequested || model.isDisposed() || model.getVersionId() !== version) return [];
+        const normalized = normalizeFormattedText(formatted, model, source);
+        if (normalized === source) return [];
+        return [{ range: model.getFullModelRange(), text: normalized }];
+      },
+    });
+  }
+}
+
+function formatCodeInWorker(
+  language: string,
+  filePath: string,
+  source: string,
+  tabSize: number,
+  useTabs: boolean,
+) {
+  const worker = ensureCodeFormatterWorker();
+  const id = ++codeFormatterRequestId;
+  return new Promise<string>((resolve, reject) => {
+    pendingCodeFormats.set(id, { resolve, reject });
+    try {
+      worker.postMessage({ id, language, filePath, source, tabSize, useTabs });
+    } catch (error) {
+      pendingCodeFormats.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+function ensureCodeFormatterWorker() {
+  if (codeFormatterWorker) return codeFormatterWorker;
+  const worker = new Worker(new URL("./codeFormatterWorker.ts", import.meta.url), { type: "module" });
+  worker.addEventListener("message", (event: MessageEvent<FormatWorkerResponse>) => {
+    const pending = pendingCodeFormats.get(event.data.id);
+    if (!pending) return;
+    pendingCodeFormats.delete(event.data.id);
+    if (event.data.error) pending.reject(new Error(event.data.error));
+    else pending.resolve(event.data.text ?? "");
+  });
+  worker.addEventListener("error", (event) => {
+    const error = new Error(event.message || "代码格式化 Worker 异常");
+    pendingCodeFormats.forEach((pending) => pending.reject(error));
+    pendingCodeFormats.clear();
+    worker.terminate();
+    if (codeFormatterWorker === worker) codeFormatterWorker = null;
+  });
+  codeFormatterWorker = worker;
+  return worker;
 }
 
 function formatSqlInWorker(source: string, tabSize: number, useTabs: boolean) {
@@ -9672,7 +9756,7 @@ function formatSqlInWorker(source: string, tabSize: number, useTabs: boolean) {
 function ensureSqlFormatterWorker() {
   if (sqlFormatterWorker) return sqlFormatterWorker;
   const worker = new Worker(new URL("./sqlFormatterWorker.ts", import.meta.url), { type: "module" });
-  worker.addEventListener("message", (event: MessageEvent<SqlFormatWorkerResponse>) => {
+  worker.addEventListener("message", (event: MessageEvent<FormatWorkerResponse>) => {
     const pending = pendingSqlFormats.get(event.data.id);
     if (!pending) return;
     pendingSqlFormats.delete(event.data.id);
@@ -9913,21 +9997,7 @@ function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string) {
 }
 
 function languageFromFilePath(path: string) {
-  const name = fileNameFromPath(path).toLowerCase();
-  const extension = fileExtension(name);
-  const matched = languageOptions().find(([id, label, hint]) => {
-    const haystack = `${id} ${label} ${hint}`.toLowerCase();
-    return haystack.includes(extension) && (
-      hint.split(",").map((item) => item.trim().toLowerCase()).includes(extension) ||
-      id === extension
-    );
-  });
-  if (matched) return matched[0];
-  if (extension === "md") return "markdown";
-  if (extension === "js" || extension === "mjs" || extension === "cjs") return "javascript";
-  if (extension === "ts") return "typescript";
-  if (extension === "yml") return "yaml";
-  return "plaintext";
+  return resolveLanguageFromFilePath(path, monaco.languages.getLanguages());
 }
 
 function markdownMatchesToDto(matches: MarkdownSearchMatch[]): TextMatchDto[] {

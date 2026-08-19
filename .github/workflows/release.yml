@@ -220,7 +220,7 @@ jobs:
           find downloaded-assets -maxdepth 1 -type f -exec cp {} release-assets/ \;
           git archive --format=zip --prefix="$prefix" -o "release-assets/otterdive-${version}-source.zip" HEAD
           git archive --format=tar --prefix="$prefix" HEAD | gzip -9 > "release-assets/otterdive-${version}-source.tar.gz"
-          node scripts/generate-latest-json.mjs release-assets "syscryer/Notra" "$release_tag" "$version"
+          node scripts/generate-latest-json.mjs release-assets "ron159/OtterDive" "$release_tag" "$version"
 
           (
             cd release-assets

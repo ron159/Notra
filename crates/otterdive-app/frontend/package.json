@@ -1,7 +1,7 @@
 {
   "name": "otterdive-frontend",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
@@ -9,11 +9,20 @@
     "test:analyse": "node scripts/verify-analyse-state.mjs",
     "test:auto-save": "node scripts/verify-auto-save.mjs",
     "test:keybindings": "node scripts/verify-keybindings.mjs",
+    "test:formatters": "node --test tests/dprintFormatter.test.mjs",
+    "test:languages": "node --test tests/languageFormattingSupport.test.mjs",
     "test:markdown": "node scripts/verify-mermaid-layout.mjs",
     "markdown:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../../scripts/sync-marktext-muya.ps1",
     "preview": "vite preview --host 127.0.0.1 --port 1420"
   },
   "dependencies": {
+    "@dprint/dockerfile": "0.5.0",
+    "@dprint/formatter": "0.5.1",
+    "@dprint/json": "0.23.0",
+    "@dprint/markdown": "0.22.1",
+    "@dprint/ruff": "0.8.3",
+    "@dprint/toml": "0.8.0",
+    "@dprint/typescript": "0.96.1",
     "@muyajs/core": "file:vendor/marktext-muya",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-process": "^2.3.1",

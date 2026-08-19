@@ -24,7 +24,7 @@ test("生成三个平台的 Tauri 更新清单", async () => {
     const publishedAt = new Date("2026-07-17T08:00:00.000Z");
     const { manifest } = await generateLatestJson({
       assetsDir,
-      repository: "syscryer/Notra",
+      repository: "ron159/OtterDive",
       releaseTag: "v0.1.3",
       version: "0.1.3",
       publishedAt,
@@ -38,6 +38,10 @@ test("生成三个平台的 Tauri 更新清单", async () => {
       "windows-x86_64",
     ]);
     assert.match(manifest.platforms["windows-x86_64"].url, /v0\.1\.3\/OtterDive_0\.1\.3_x64-setup-windows-x64\.exe$/);
+    assert.equal(
+      manifest.platforms["windows-x86_64"].url,
+      "https://github.com/ron159/OtterDive/releases/download/v0.1.3/OtterDive_0.1.3_x64-setup-windows-x64.exe",
+    );
     const fileManifest = JSON.parse(await readFile(path.join(assetsDir, "latest.json"), "utf8"));
     assert.deepEqual(fileManifest, manifest);
   } finally {
@@ -52,7 +56,7 @@ test("缺少签名时拒绝生成更新清单", async () => {
     await assert.rejects(
       generateLatestJson({
         assetsDir,
-        repository: "syscryer/Notra",
+        repository: "ron159/OtterDive",
         releaseTag: "v0.1.3",
         version: "0.1.3",
       }),
