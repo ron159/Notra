@@ -1417,6 +1417,7 @@ function bootstrap() {
   bindKeybindings();
 
   bindActions();
+  bindNativeMenuListener();
   bindTabScroller();
   bindFileDrop();
   bindWindowControls();
@@ -2367,6 +2368,52 @@ function bindAppMenus() {
   bindMenuAction("menuThemeButton", toggleTheme);
 }
 
+function bindNativeMenuListener() {
+  if (!isMacOSRuntime) return;
+  void listen<string>("native-menu", (event) => {
+    const actions: Record<string, () => void> = {
+      "app.settings": openSettingsPage,
+      "file.new": newDocument,
+      "file.new_markdown": newMarkdownDocument,
+      "file.open": () => void openDocument(),
+      "file.open_recent": () => toggleMenu("recentMenu"),
+      "file.open_workspace": () => void enterWorkspaceMode(),
+      "file.close_workspace": () => void closeWorkspace(),
+      "file.save": () => void saveActive(),
+      "file.save_all": () => void saveAll(),
+      "file.save_as": () => void saveAsActive(),
+      "file.close": () => void closeDocument(activeDocument().id),
+      "edit.uppercase": transformToUppercase,
+      "edit.lowercase": transformToLowercase,
+      "edit.format_document": () => void formatActiveDocument(),
+      "search.find": () => {
+        setFindView("find");
+        toggleFindOpen({ prefillFromSelection: true });
+      },
+      "search.replace": () => {
+        setFindView("replace");
+        toggleFindOpen({ prefillFromSelection: true });
+      },
+      "search.find_workspace": () => void openWorkspaceFind("workspace-find"),
+      "search.replace_workspace": () => void openWorkspaceFind("workspace-replace"),
+      "search.go_to_line": goToLine,
+      "search.command_palette": openCommandPalette,
+      "view.word_wrap": toggleWordWrap,
+      "view.markdown_wysiwyg": () => setMarkdownEditMode("wysiwyg"),
+      "view.markdown_split": () => setMarkdownEditMode("split"),
+      "view.markdown_source": () => setMarkdownEditMode("source"),
+      "view.markdown_outline": openMarkdownOutline,
+      "view.theme": toggleTheme,
+      "help.check_updates": () => {
+        openSettingsPage();
+        selectSettingsSection("about");
+        void checkForAppUpdate(true);
+      },
+    };
+    actions[event.payload]?.();
+  }).catch((error) => log(`监听 macOS 系统菜单失败：${String(error)}`));
+}
+
 function bindMenuAction(id: string, action: () => void) {
   $(id).addEventListener("click", () => {
     closeMenus();
@@ -2729,7 +2776,7 @@ async function checkForAppUpdate(manual: boolean) {
     appUpdateDetail = `发现新版本 ${update.version}，当前版本 ${update.currentVersion}`;
     renderAppUpdateStatus();
 
-    if (manual) openAppUpdatePopover();
+    if (manual && !isMacOSRuntime) openAppUpdatePopover();
   } catch (error) {
     appUpdateStatus = "failed";
     appUpdateDetail = manual ? "检查更新失败，请稍后重试" : `当前版本 ${appVersion} · 自动检查失败`;
@@ -3148,20 +3195,25 @@ function setMarkdownEditMode(mode: MarkdownEditMode) {
 
 function bindWindowControls() {
   const titlebar = $("windowTitlebar");
-  titlebar.addEventListener("mousedown", (event) => {
-    if (event.button !== 0 || isInteractiveTarget(event.target)) return;
-    event.preventDefault();
-    if (event.detail >= 2) {
+  const dragSurfaces = [titlebar];
+  const toolbar = document.querySelector<HTMLElement>(".toolbar");
+  if (isMacOSRuntime && toolbar) dragSurfaces.push(toolbar);
+  for (const surface of dragSurfaces) {
+    surface.addEventListener("mousedown", (event) => {
+      if (event.button !== 0 || isInteractiveTarget(event.target)) return;
+      event.preventDefault();
+      if (event.detail >= 2) {
+        toggleTitlebarMaximize();
+        return;
+      }
+      void appWindow?.startDragging();
+    });
+    surface.addEventListener("dblclick", (event) => {
+      if (isInteractiveTarget(event.target)) return;
+      event.preventDefault();
       toggleTitlebarMaximize();
-      return;
-    }
-    void appWindow?.startDragging();
-  });
-  titlebar.addEventListener("dblclick", (event) => {
-    if (isInteractiveTarget(event.target)) return;
-    event.preventDefault();
-    toggleTitlebarMaximize();
-  });
+    });
+  }
   $("windowMinimize").addEventListener("click", () => void appWindow?.minimize());
   $("windowMaximize").addEventListener("click", () => void appWindow?.toggleMaximize());
   $("windowClose").addEventListener("click", () => void requestWindowClose());

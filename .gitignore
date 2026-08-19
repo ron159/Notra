@@ -16,3 +16,6 @@ docs/
 *.swp
 Thumbs.db
 desktop.ini
+**/.DS_Store
+:memory:
+**/:memory:

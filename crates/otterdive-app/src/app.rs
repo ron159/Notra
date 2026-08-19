@@ -11,6 +11,9 @@ use std::process::Command;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
+#[cfg(target_os = "macos")]
+use tauri::menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder};
+
 use crate::analyse::AnalyseService;
 use crate::session_store::SessionStore;
 use crate::shell_integration::ShellIntegrationStatus;
@@ -123,6 +126,175 @@ pub struct WorkspaceDto {
     pub root: String,
     pub name: String,
     pub items: Vec<TreeItemDto>,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_menu_item(
+    app: &tauri::AppHandle,
+    id: &str,
+    text: &str,
+    accelerator: Option<&str>,
+) -> tauri::Result<MenuItem<tauri::Wry>> {
+    let builder = MenuItemBuilder::with_id(id, text);
+    match accelerator {
+        Some(accelerator) => builder.accelerator(accelerator).build(app),
+        None => builder.build(app),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let settings = macos_menu_item(app, "app.settings", "设置…", Some("CmdOrCtrl+,"))?;
+    let app_menu = SubmenuBuilder::new(app, "OtterDive")
+        .about_with_text("关于 OtterDive", None)
+        .separator()
+        .item(&settings)
+        .separator()
+        .services_with_text("服务")
+        .separator()
+        .hide_with_text("隐藏 OtterDive")
+        .hide_others_with_text("隐藏其他")
+        .show_all_with_text("全部显示")
+        .separator()
+        .quit_with_text("退出 OtterDive")
+        .build()?;
+
+    let new_document = macos_menu_item(app, "file.new", "新建", Some("CmdOrCtrl+N"))?;
+    let new_markdown = macos_menu_item(
+        app,
+        "file.new_markdown",
+        "新建 Markdown",
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
+    let open_document = macos_menu_item(app, "file.open", "打开文件…", Some("CmdOrCtrl+O"))?;
+    let open_recent = macos_menu_item(app, "file.open_recent", "最近打开", None)?;
+    let open_workspace = macos_menu_item(
+        app,
+        "file.open_workspace",
+        "打开工作区…",
+        Some("CmdOrCtrl+Alt+O"),
+    )?;
+    let close_workspace = macos_menu_item(app, "file.close_workspace", "关闭工作区", None)?;
+    let save = macos_menu_item(app, "file.save", "保存", Some("CmdOrCtrl+S"))?;
+    let save_all = macos_menu_item(app, "file.save_all", "全部保存", Some("CmdOrCtrl+Alt+S"))?;
+    let save_as = macos_menu_item(app, "file.save_as", "另存为…", Some("CmdOrCtrl+Shift+S"))?;
+    let close_document = macos_menu_item(app, "file.close", "关闭当前标签", Some("CmdOrCtrl+W"))?;
+    let file_menu = SubmenuBuilder::new(app, "文件")
+        .items(&[&new_document, &new_markdown])
+        .separator()
+        .items(&[
+            &open_document,
+            &open_recent,
+            &open_workspace,
+            &close_workspace,
+        ])
+        .separator()
+        .items(&[&save, &save_all, &save_as])
+        .separator()
+        .item(&close_document)
+        .build()?;
+
+    let uppercase = macos_menu_item(app, "edit.uppercase", "转为大写", None)?;
+    let lowercase = macos_menu_item(app, "edit.lowercase", "转为小写", None)?;
+    let format_document = macos_menu_item(
+        app,
+        "edit.format_document",
+        "格式化文档",
+        Some("Shift+Alt+F"),
+    )?;
+    let edit_menu = SubmenuBuilder::new(app, "编辑")
+        .undo_with_text("撤销")
+        .redo_with_text("重做")
+        .separator()
+        .cut_with_text("剪切")
+        .copy_with_text("复制")
+        .paste_with_text("粘贴")
+        .select_all_with_text("全选")
+        .separator()
+        .items(&[&uppercase, &lowercase, &format_document])
+        .build()?;
+
+    let find = macos_menu_item(app, "search.find", "查找…", Some("CmdOrCtrl+F"))?;
+    let replace = macos_menu_item(app, "search.replace", "替换…", Some("CmdOrCtrl+Alt+F"))?;
+    let find_workspace = macos_menu_item(
+        app,
+        "search.find_workspace",
+        "在文件中查找…",
+        Some("CmdOrCtrl+Shift+F"),
+    )?;
+    let replace_workspace = macos_menu_item(
+        app,
+        "search.replace_workspace",
+        "在文件中替换…",
+        Some("CmdOrCtrl+Shift+Alt+F"),
+    )?;
+    let go_to_line = macos_menu_item(app, "search.go_to_line", "跳转到行…", Some("CmdOrCtrl+G"))?;
+    let command_palette = macos_menu_item(
+        app,
+        "search.command_palette",
+        "命令面板…",
+        Some("CmdOrCtrl+P"),
+    )?;
+    let search_menu = SubmenuBuilder::new(app, "查找")
+        .items(&[&find, &replace])
+        .separator()
+        .items(&[&find_workspace, &replace_workspace])
+        .separator()
+        .items(&[&go_to_line, &command_palette])
+        .build()?;
+
+    let word_wrap = macos_menu_item(app, "view.word_wrap", "自动换行", Some("Alt+Z"))?;
+    let markdown_wysiwyg =
+        macos_menu_item(app, "view.markdown_wysiwyg", "Markdown 即时编辑", None)?;
+    let markdown_split = macos_menu_item(app, "view.markdown_split", "Markdown 分屏预览", None)?;
+    let markdown_source = macos_menu_item(app, "view.markdown_source", "Markdown 源码", None)?;
+    let markdown_outline = macos_menu_item(
+        app,
+        "view.markdown_outline",
+        "Markdown 大纲",
+        Some("CmdOrCtrl+Shift+O"),
+    )?;
+    let theme = macos_menu_item(app, "view.theme", "切换主题", None)?;
+    let view_menu = SubmenuBuilder::new(app, "视图")
+        .item(&word_wrap)
+        .separator()
+        .items(&[
+            &markdown_wysiwyg,
+            &markdown_split,
+            &markdown_source,
+            &markdown_outline,
+        ])
+        .separator()
+        .item(&theme)
+        .separator()
+        .fullscreen_with_text("进入全屏")
+        .build()?;
+
+    let window_menu = SubmenuBuilder::new(app, "窗口")
+        .minimize_with_text("最小化")
+        .maximize_with_text("缩放")
+        .separator()
+        .bring_all_to_front_with_text("前置全部窗口")
+        .build()?;
+    window_menu.set_as_windows_menu_for_nsapp()?;
+
+    let check_updates = macos_menu_item(app, "help.check_updates", "检查更新…", None)?;
+    let help_menu = SubmenuBuilder::new(app, "帮助")
+        .item(&check_updates)
+        .build()?;
+    help_menu.set_as_help_menu_for_nsapp()?;
+
+    MenuBuilder::new(app)
+        .items(&[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &search_menu,
+            &view_menu,
+            &window_menu,
+            &help_menu,
+        ])
+        .build()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -330,7 +502,7 @@ fn persisted_window_state_flags() -> tauri_plugin_window_state::StateFlags {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
@@ -351,7 +523,14 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
-        }))
+        }));
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_macos_menu).on_menu_event(|app, event| {
+        let _ = app.emit("native-menu", event.id().as_ref());
+    });
+
+    builder
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 use tauri_plugin_window_state::WindowExt;
