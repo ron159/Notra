@@ -6,6 +6,17 @@ import path from "node:path";
 
 import { generateLatestJson } from "./generate-latest-json.mjs";
 
+const otterDiveReleaseRepository = "ron159/OtterDive";
+const otterDiveUpdaterEndpoint =
+  `https://github.com/${otterDiveReleaseRepository}/releases/latest/download/latest.json`;
+
+test("应用更新源固定为 OtterDive 自有 Release", async () => {
+  const config = JSON.parse(
+    await readFile(new URL("../crates/otterdive-app/tauri.conf.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(config.plugins.updater.endpoints, [otterDiveUpdaterEndpoint]);
+});
+
 test("生成三个平台的 Tauri 更新清单", async () => {
   const assetsDir = await mkdtemp(path.join(os.tmpdir(), "otterdive-latest-json-"));
   const artifacts = [
@@ -24,7 +35,7 @@ test("生成三个平台的 Tauri 更新清单", async () => {
     const publishedAt = new Date("2026-07-17T08:00:00.000Z");
     const { manifest } = await generateLatestJson({
       assetsDir,
-      repository: "ron159/OtterDive",
+      repository: otterDiveReleaseRepository,
       releaseTag: "v0.1.3",
       version: "0.1.3",
       publishedAt,
@@ -56,7 +67,7 @@ test("缺少签名时拒绝生成更新清单", async () => {
     await assert.rejects(
       generateLatestJson({
         assetsDir,
-        repository: "ron159/OtterDive",
+        repository: otterDiveReleaseRepository,
         releaseTag: "v0.1.3",
         version: "0.1.3",
       }),

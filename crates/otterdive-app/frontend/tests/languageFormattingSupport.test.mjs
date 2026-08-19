@@ -5,6 +5,7 @@ import ts from "typescript";
 
 const languageSupport = await loadTypeScriptModule("../src/languageSupport.ts");
 const formatterSupport = await loadTypeScriptModule("../src/formatterSupport.ts");
+const mainSource = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
 
 const registry = [
   { id: "custom", extensions: [".custom"], filenames: ["CUSTOMFILE"] },
@@ -31,7 +32,20 @@ test("routes supported languages to a matching formatter file name", () => {
   assert.equal(formatterSupport.supportsDprintLanguage("rust"), false);
   assert.equal(formatterSupport.formatterFilePath("typescript", "/tmp/component.tsx"), "component.tsx");
   assert.equal(formatterSupport.formatterFilePath("typescript", null), "untitled.ts");
+  assert.equal(formatterSupport.formatterFilePath("json", "/tmp/Untitled-1.txt"), "untitled.json");
   assert.equal(formatterSupport.formatterFilePath("dockerfile", "/tmp/Containerfile"), "Dockerfile");
+});
+
+test("keeps a manually selected language ahead of the file extension", () => {
+  assert.equal(languageSupport.languageWithOverride("plaintext", "json"), "json");
+  assert.equal(languageSupport.languageWithOverride("json", undefined), "json");
+  assert.equal(languageSupport.languageWithOverride(undefined, undefined), "plaintext");
+});
+
+test("formats with the Monaco-selected language and surfaces failures", () => {
+  assert.match(mainSource, /doc\.languageOverride = language;/);
+  assert.match(mainSource, /const language = doc\.model\.getLanguageId\(\) \|\| doc\.language \|\| "plaintext";/);
+  assert.match(mainSource, /title: "格式化失败",[\s\S]*subtitle: `已按 \$\{label\} 语言处理`/);
 });
 
 test("preserves whether the source ended with a newline", () => {

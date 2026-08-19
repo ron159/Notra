@@ -6332,11 +6332,11 @@ html:not(.platform-macos) .monaco-scrollable-element > .scrollbar > .slider {
     "workspace right"
     "results results"
     "status status";
-  grid-template-rows: 42px 34px minmax(0, 1fr) 0 30px;
+  grid-template-rows: 48px 34px minmax(0, 1fr) 0 30px;
 }
 
 .platform-macos #app.bottom-results-open {
-  grid-template-rows: 42px 34px minmax(120px, 1fr) var(--bottom-results-height, 280px) 30px;
+  grid-template-rows: 48px 34px minmax(120px, 1fr) var(--bottom-results-height, 280px) 30px;
 }
 
 .platform-macos .titlebar {
@@ -6344,7 +6344,7 @@ html:not(.platform-macos) .monaco-scrollable-element > .scrollbar > .slider {
 }
 
 .platform-macos .toolbar {
-  padding-left: 78px;
+  padding-left: 88px;
   user-select: none;
   border-bottom-color: var(--glass-border);
   background: color-mix(in srgb, var(--glass-surface-strong) 82%, transparent);

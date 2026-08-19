@@ -17,6 +17,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  OTTERDIVE_RELEASE_REPOSITORY: ron159/OtterDive
+  OTTERDIVE_UPDATER_ENDPOINT: https://github.com/ron159/OtterDive/releases/latest/download/latest.json
 
 jobs:
   build:
@@ -104,7 +106,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $tauriVersion = (Get-Content "crates/otterdive-app/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          $tauriConfig = Get-Content "crates/otterdive-app/tauri.conf.json" -Raw | ConvertFrom-Json
+          $tauriVersion = $tauriConfig.version
           $frontendVersion = (Get-Content "crates/otterdive-app/frontend/package.json" -Raw | ConvertFrom-Json).version
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
           $appPackage = $metadata.packages | Where-Object { $_.name -eq "otterdive-app" }
@@ -129,6 +132,12 @@ jobs:
           }
 
           $hasError = $false
+          $updaterEndpoints = @($tauriConfig.plugins.updater.endpoints)
+          if ($updaterEndpoints.Count -ne 1 -or $updaterEndpoints[0] -ne $env:OTTERDIVE_UPDATER_ENDPOINT) {
+            Write-Host "::error::Updater endpoint must be $($env:OTTERDIVE_UPDATER_ENDPOINT), got $($updaterEndpoints -join ', ')"
+            $hasError = $true
+          }
+
           foreach ($entry in $versions.GetEnumerator()) {
             if ($entry.Value -ne $tauriVersion) {
               Write-Host "::error::$($entry.Key) version $($entry.Value) does not match $tauriVersion"
@@ -220,7 +229,7 @@ jobs:
           find downloaded-assets -maxdepth 1 -type f -exec cp {} release-assets/ \;
           git archive --format=zip --prefix="$prefix" -o "release-assets/otterdive-${version}-source.zip" HEAD
           git archive --format=tar --prefix="$prefix" HEAD | gzip -9 > "release-assets/otterdive-${version}-source.tar.gz"
-          node scripts/generate-latest-json.mjs release-assets "ron159/OtterDive" "$release_tag" "$version"
+          node scripts/generate-latest-json.mjs release-assets "${OTTERDIVE_RELEASE_REPOSITORY}" "$release_tag" "$version"
 
           (
             cd release-assets

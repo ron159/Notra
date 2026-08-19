@@ -121,6 +121,7 @@ import {
 import {
   PINNED_LANGUAGES,
   languageFromFilePath as resolveLanguageFromFilePath,
+  languageWithOverride,
   type LanguageEntry,
 } from "./languageSupport";
 import {
@@ -250,6 +251,7 @@ interface OpenDocument extends DocumentDto {
   model: monaco.editor.ITextModel;
   dirty: boolean;
   savedText: string;
+  languageOverride?: string;
   viewState?: monaco.editor.ICodeEditorViewState;
   encodingStatus: "编码已识别" | "重新解释" | "转换待保存";
 }
@@ -258,6 +260,7 @@ interface ClosedDocumentSnapshot extends DocumentDto {
   draftId?: string;
   dirty: boolean;
   savedText: string;
+  languageOverride?: string;
   origin: DocumentOrigin;
   viewState?: monaco.editor.ICodeEditorViewState;
 }
@@ -302,6 +305,7 @@ interface DraftDocumentSnapshot {
   encoding: EncodingLabel;
   lineEnding: string;
   language: string;
+  languageOverride?: string;
   savedText: string;
   dirty: boolean;
 }
@@ -311,6 +315,7 @@ interface SessionSnapshot {
   openFiles: string[];
   draftDocuments: DraftDocumentSnapshot[];
   documentOrigins: Record<string, DocumentOrigin>;
+  documentLanguageOverrides?: Record<string, string>;
   documentViews: Record<string, monaco.editor.ICodeEditorViewState>;
   recentFiles: string[];
   recentWorkspaces: string[];
@@ -1010,7 +1015,7 @@ type ConfirmOptions = {
   subtitle: string;
   body: string;
   okLabel?: string;
-  cancelLabel?: string;
+  cancelLabel?: string | null;
   danger?: boolean;
 };
 type TextInputOptions = {
@@ -1735,7 +1740,7 @@ function registerAppCommands() {
     editorCommand("editor.toggleLineComment", "切换行注释", "editor.action.commentLine", editorOnly),
     editorCommand("editor.toggleBlockComment", "切换块注释", "editor.action.blockComment", editorOnly),
     command("editor.formatDocument", "格式化文档", "编辑", formatActiveDocument, {
-      when: () => editorOnly() && isFormattingActionSupported(),
+      when: editorOnly,
     }),
     editorCommand("editor.selectNextOccurrence", "选中下一个同词", "editor.action.addSelectionToNextFindMatch", editorOnly),
     editorCommand("editor.selectAllOccurrences", "选中所有同词", "editor.action.selectHighlights", editorOnly),
@@ -3597,6 +3602,7 @@ function askConfirm(options: ConfirmOptions): Promise<boolean> {
   $("confirmSubtitle").textContent = options.subtitle;
   $("confirmBody").textContent = options.body;
   $("confirmCancelButton").textContent = options.cancelLabel ?? "取消";
+  $("confirmCancelButton").classList.toggle("hidden", options.cancelLabel === null);
   $("confirmOkButton").textContent = options.okLabel ?? "确认";
   $("confirmOkButton").classList.toggle("danger", !!options.danger);
   $("confirmDialog").classList.remove("hidden");
@@ -3604,6 +3610,10 @@ function askConfirm(options: ConfirmOptions): Promise<boolean> {
   return new Promise((resolve) => {
     confirmResolver = resolve;
   });
+}
+
+async function showAlert(options: Omit<ConfirmOptions, "cancelLabel">) {
+  await askConfirm({ ...options, cancelLabel: null });
 }
 
 function resolveConfirmDialog(value: boolean) {
@@ -3680,10 +3690,12 @@ function createDocument(
     dirty?: boolean;
     savedText?: string;
     origin?: DocumentOrigin;
+    languageOverride?: string;
   } = {},
 ): OpenDocument {
   const uri = monaco.Uri.parse(`otterdive://model/${nextId}/${encodeURIComponent(dto.title)}`);
-  const model = monaco.editor.createModel(dto.text, dto.language || "plaintext", uri);
+  const language = languageWithOverride(dto.language, options.languageOverride);
+  const model = monaco.editor.createModel(dto.text, language, uri);
   const savedText = options.savedText ?? dto.text;
   const doc: OpenDocument = {
     ...dto,
@@ -3693,6 +3705,8 @@ function createDocument(
     model,
     dirty: options.dirty ?? dto.text !== savedText,
     savedText,
+    language,
+    languageOverride: options.languageOverride,
     encodingStatus: "编码已识别",
   };
   model.onDidChangeContent(() => {
@@ -3826,6 +3840,7 @@ function addOrReplaceDocument(dto: DocumentDto, origin: DocumentOrigin) {
     if (!existing.dirty) {
       existing.model.setValue(dto.text);
       Object.assign(existing, dto, { dirty: false, savedText: dto.text, encodingStatus: "编码已识别" });
+      applyDetectedDocumentLanguage(existing, dto.language);
     }
     if (origin === "standalone") existing.origin = "standalone";
     activateDocument(existing.id);
@@ -3881,7 +3896,7 @@ async function saveDocument(doc: OpenDocument, forceSaveAs: boolean) {
     encodingStatus: "编码已识别",
   });
   doc.draftId = undefined;
-  monaco.editor.setModelLanguage(doc.model, saved.language || "plaintext");
+  applyDetectedDocumentLanguage(doc, saved.language);
   renderAll();
   scheduleSessionSave();
   log(`保存 ${doc.title}`);
@@ -4076,6 +4091,7 @@ function rememberClosedDocument(doc: OpenDocument) {
     readOnly: doc.readOnly,
     readOnlyReason: doc.readOnlyReason,
     language: doc.language,
+    languageOverride: doc.languageOverride,
     largeFile: doc.largeFile,
     draftId: doc.draftId,
     dirty: doc.dirty,
@@ -4381,9 +4397,7 @@ function applyDocumentRename(doc: OpenDocument, name: string, nextPath?: string)
   if (doc.id === state.activeId) syncMarkdownModelFromEditor(doc);
   doc.title = name;
   if (nextPath) doc.path = nextPath;
-  const language = languageFromFilePath(nextPath || name);
-  doc.language = language;
-  monaco.editor.setModelLanguage(doc.model, language);
+  applyDetectedDocumentLanguage(doc, languageFromFilePath(nextPath || name));
   const nextSessionKey = documentSessionKey(doc);
   if (oldSessionKey !== nextSessionKey && state.bookmarks[oldSessionKey]) {
     state.bookmarks[nextSessionKey] = state.bookmarks[oldSessionKey];
@@ -4790,6 +4804,7 @@ function removeCollapsedDirsForDeletedPath(path: string) {
 
 function setLanguage(language: string) {
   const doc = activeDocument();
+  doc.languageOverride = language;
   doc.language = language;
   monaco.editor.setModelLanguage(doc.model, language);
   closeMenus();
@@ -4818,7 +4833,7 @@ async function useEncoding(encoding: EncodingLabel) {
     );
     doc.model.setValue(reopened.text);
     Object.assign(doc, reopened, { dirty: false, savedText: reopened.text, encodingStatus: "重新解释" });
-    monaco.editor.setModelLanguage(doc.model, reopened.language || "plaintext");
+    applyDetectedDocumentLanguage(doc, reopened.language);
   } else {
     doc.encoding = encoding;
     doc.encodingStatus = "重新解释";
@@ -5514,7 +5529,7 @@ async function refreshOpenDocumentsAfterReplace(applied: ReplacePreviewDto) {
     const reopened = await withBusy(`重新载入 ${doc.title}`, () => invoke<DocumentDto>("open_path", { path: doc.path }));
     doc.model.setValue(reopened.text);
     Object.assign(doc, reopened, { dirty: false, savedText: reopened.text, encodingStatus: "编码已识别" });
-    monaco.editor.setModelLanguage(doc.model, reopened.language || "plaintext");
+    applyDetectedDocumentLanguage(doc, reopened.language);
   }
   renderAll();
 }
@@ -6144,8 +6159,9 @@ function renderChrome() {
   $<HTMLButtonElement>("menuSaveAllButton").disabled = $<HTMLButtonElement>("saveAllButton").disabled;
   $<HTMLButtonElement>("menuUppercaseButton").disabled = doc.readOnly;
   $<HTMLButtonElement>("menuLowercaseButton").disabled = doc.readOnly;
-  $<HTMLButtonElement>("formatDocumentButton").disabled = doc.readOnly || !isFormattingActionSupported();
-  $<HTMLButtonElement>("menuFormatDocumentButton").disabled = doc.readOnly || !isFormattingActionSupported();
+  const formattingDisabled = doc.readOnly || isMarkdownWysiwygActive(doc);
+  $<HTMLButtonElement>("formatDocumentButton").disabled = formattingDisabled;
+  $<HTMLButtonElement>("menuFormatDocumentButton").disabled = formattingDisabled;
   ["menuMarkdownWysiwygButton", "menuMarkdownSplitButton", "menuMarkdownSourceButton"].forEach((id) => {
     $<HTMLButtonElement>(id).disabled = !markdownDocument;
   });
@@ -8522,54 +8538,64 @@ function runEditorAction(actionId: string, successMessage?: string) {
 
 function isFormattingActionSupported(doc = activeDocument()) {
   if (!editor || isMarkdownWysiwygActive(doc)) return false;
-  if (doc.language === "sql" || supportsDprintLanguage(doc.language)) return true;
+  const language = doc.model.getLanguageId() || doc.language || "plaintext";
+  if (language === "sql" || supportsDprintLanguage(language)) return true;
   return editor.getAction("editor.action.formatDocument")?.isSupported() ?? false;
 }
 
 async function formatActiveDocument() {
   const doc = activeDocument();
   if (doc.readOnly || isMarkdownWysiwygActive()) return;
+  const language = doc.model.getLanguageId() || doc.language || "plaintext";
+  const label = languageLabel(language);
   const action = editor.getAction("editor.action.formatDocument");
   if (!isFormattingActionSupported(doc)) {
-    log(`${languageLabel(doc.language)} 暂无可用格式化器`);
+    const message = `${label} 暂无可用格式化器`;
+    log(message);
+    await showAlert({
+      title: "无法格式化",
+      subtitle: `当前按 ${label} 语言处理`,
+      body: message,
+      okLabel: "知道了",
+    });
     return;
   }
 
   const before = doc.model.getValue();
   if (!before.trim()) {
-    log(`${languageLabel(doc.language)} 已是规范格式`);
+    log(`${label} 已是规范格式`);
     return;
   }
 
   try {
     const version = doc.model.getVersionId();
-    if (doc.language === "sql") {
+    if (language === "sql") {
       const options = doc.model.getOptions();
       const formatted = await withBusy(
         "正在格式化 SQL",
         () => formatSqlInWorker(before, options.tabSize, !options.insertSpaces),
         { lockEditor: false },
       );
-      if (doc.model.isDisposed() || doc.model.getVersionId() !== version) {
-        log("文档内容已变化，已取消格式化");
+      if (doc.model.isDisposed() || doc.model.getVersionId() !== version || doc.model.getLanguageId() !== language) {
+        log("文档内容或语言已变化，已取消格式化");
         return;
       }
       replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model, before));
-    } else if (supportsDprintLanguage(doc.language)) {
+    } else if (supportsDprintLanguage(language)) {
       const options = doc.model.getOptions();
       const formatted = await withBusy(
-        `正在格式化 ${languageLabel(doc.language)}`,
+        `正在格式化 ${label}`,
         () => formatCodeInWorker(
-          doc.language,
-          formatterFilePath(doc.language, doc.path || doc.title),
+          language,
+          formatterFilePath(language, doc.path || doc.title),
           before,
           options.tabSize,
           !options.insertSpaces,
         ),
         { lockEditor: false },
       );
-      if (doc.model.isDisposed() || doc.model.getVersionId() !== version) {
-        log("文档内容已变化，已取消格式化");
+      if (doc.model.isDisposed() || doc.model.getVersionId() !== version || doc.model.getLanguageId() !== language) {
+        log("文档内容或语言已变化，已取消格式化");
         return;
       }
       replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model, before));
@@ -8577,10 +8603,16 @@ async function formatActiveDocument() {
       await action?.run();
     }
     editor.focus();
-    const label = languageLabel(doc.language);
     log(doc.model.getValue() === before ? `${label} 已是规范格式` : `${label} 已格式化`);
   } catch (error) {
-    log(`${languageLabel(doc.language)} 格式化失败：${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    log(`${label} 格式化失败：${message}`);
+    await showAlert({
+      title: "格式化失败",
+      subtitle: `已按 ${label} 语言处理`,
+      body: message,
+      okLabel: "知道了",
+    });
   }
 }
 
@@ -9263,7 +9295,14 @@ async function restoreSession() {
         const dto = await invoke<DocumentDto>("open_path", { path });
         addOrReplaceDocument(dto, restoredDocumentOrigin(path, snapshot));
         const restored = state.documents.find((doc) => doc.path === path);
-        if (restored) restored.viewState = snapshot.documentViews?.[documentSessionKey(restored)];
+        if (restored) {
+          restored.viewState = snapshot.documentViews?.[documentSessionKey(restored)];
+          const languageOverride = snapshot.documentLanguageOverrides?.[documentSessionKey(restored)];
+          if (languageOverride) {
+            restored.languageOverride = languageOverride;
+            applyDetectedDocumentLanguage(restored, restored.language);
+          }
+        }
         restoredCount += 1;
       } catch (error) {
         log(`恢复文件失败：${path}：${String(error)}`);
@@ -9404,6 +9443,7 @@ function createDraftDocument(snapshot: Partial<DraftDocumentSnapshot>) {
       draftId: snapshot.id || createDraftId(),
       dirty: snapshot.dirty ?? text !== (snapshot.savedText ?? ""),
       savedText: snapshot.savedText ?? "",
+      languageOverride: snapshot.languageOverride,
     },
   );
 }
@@ -9456,6 +9496,7 @@ function draftDocumentSnapshots() {
       encoding: doc.encoding,
       lineEnding: doc.lineEnding || "LF",
       language: doc.language || "plaintext",
+      languageOverride: doc.languageOverride,
       savedText: doc.savedText,
       dirty: doc.dirty,
     }));
@@ -9477,12 +9518,17 @@ async function saveSession() {
   if (activeBeforeSave) activeBeforeSave.viewState = editor.saveViewState() ?? undefined;
   const active = activeDocument();
   const snapshot: SessionSnapshot = {
-    version: 9,
+    version: 10,
     openFiles: uniquePaths(state.documents.flatMap((doc) => (doc.path ? [doc.path] : []))),
     draftDocuments: draftDocumentSnapshots(),
     documentOrder: state.documents.map(documentSessionKey),
     documentOrigins: Object.fromEntries(
       state.documents.map((doc) => [documentSessionKey(doc), doc.origin]),
+    ),
+    documentLanguageOverrides: Object.fromEntries(
+      state.documents.flatMap((doc) => doc.languageOverride
+        ? [[documentSessionKey(doc), doc.languageOverride]]
+        : []),
     ),
     documentViews: Object.fromEntries(
       state.documents.flatMap((doc) => doc.viewState ? [[documentSessionKey(doc), doc.viewState]] : []),
@@ -9998,6 +10044,12 @@ function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string) {
 
 function languageFromFilePath(path: string) {
   return resolveLanguageFromFilePath(path, monaco.languages.getLanguages());
+}
+
+function applyDetectedDocumentLanguage(doc: OpenDocument, detectedLanguage: string | null | undefined) {
+  const language = languageWithOverride(detectedLanguage, doc.languageOverride);
+  doc.language = language;
+  monaco.editor.setModelLanguage(doc.model, language);
 }
 
 function markdownMatchesToDto(matches: MarkdownSearchMatch[]): TextMatchDto[] {

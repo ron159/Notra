@@ -25,6 +25,13 @@ export const PINNED_LANGUAGES: LanguageEntry[] = [
   ["rust", "Rust", "rs"],
 ];
 
+export function languageWithOverride(
+  detectedLanguage: string | null | undefined,
+  languageOverride: string | null | undefined,
+) {
+  return languageOverride || detectedLanguage || "plaintext";
+}
+
 const LANGUAGE_BY_FILE_NAME: Record<string, string> = {
   "containerfile": "dockerfile",
   "dockerfile": "dockerfile",
