@@ -1,16 +1,18 @@
 {
   "name": "otterdive-frontend",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc && vite build",
+    "benchmark:fixtures": "node scripts/generate-open-performance-fixtures.mjs",
     "test:analyse": "node scripts/verify-analyse-state.mjs",
     "test:auto-save": "node scripts/verify-auto-save.mjs",
     "test:keybindings": "node scripts/verify-keybindings.mjs",
     "test:formatters": "node --test tests/dprintFormatter.test.mjs",
     "test:languages": "node --test tests/languageFormattingSupport.test.mjs",
+    "test:performance": "node --test tests/openBatch.test.mjs tests/openPerformance.test.mjs",
     "test:markdown": "node scripts/verify-mermaid-layout.mjs",
     "markdown:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../../scripts/sync-marktext-muya.ps1",
     "preview": "vite preview --host 127.0.0.1 --port 1420"

@@ -44,7 +44,7 @@ test("keeps a manually selected language ahead of the file extension", () => {
 
 test("formats with the Monaco-selected language and surfaces failures", () => {
   assert.match(mainSource, /doc\.languageOverride = language;/);
-  assert.match(mainSource, /const language = doc\.model\.getLanguageId\(\) \|\| doc\.language \|\| "plaintext";/);
+  assert.match(mainSource, /const language = (?:ensureDocumentModel\(doc\)|model)\.getLanguageId\(\) \|\| doc\.language \|\| "plaintext";/);
   assert.match(mainSource, /title: "格式化失败",[\s\S]*subtitle: `已按 \$\{label\} 语言处理`/);
 });
 

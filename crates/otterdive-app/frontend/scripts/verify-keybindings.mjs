@@ -100,10 +100,11 @@ if (!mainSource.includes('className = `keybinding-group ${collapsed ? "collapsed
   failures.push("快捷键设置没有按命令分类渲染分组");
 }
 if (
-  !mainSource.includes("dirty: currentText !== textToSave")
-  || !mainSource.includes("savedText: textToSave")
+  !mainSource.includes("const savedAlternativeVersionId = model.getAlternativeVersionId()")
+  || !mainSource.includes("dirty: model.getAlternativeVersionId() !== savedAlternativeVersionId")
+  || !mainSource.includes("doc.savedAlternativeVersionId = savedAlternativeVersionId")
 ) {
-  failures.push("保存完成后没有使用实际提交的文本快照清理未保存状态");
+  failures.push("保存完成后没有使用实际提交的 Monaco 版本快照更新未保存状态");
 }
 
 for (const [profileName, profile] of profiles) {

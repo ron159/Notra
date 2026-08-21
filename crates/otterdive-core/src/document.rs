@@ -88,6 +88,45 @@ pub struct Document {
     redo_stack: Vec<String>,
 }
 
+#[derive(Debug)]
+pub struct LoadedDocument {
+    pub title: String,
+    pub text: String,
+    pub meta: DocumentMeta,
+}
+
+impl LoadedDocument {
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
+        let metadata = fs::metadata(path)?;
+        let bytes = fs::read(path)?;
+        let decoded = decode_bytes(&bytes);
+        let title = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Untitled")
+            .to_owned();
+        let line_ending = LineEnding::detect(&decoded.text);
+        let (read_only, read_only_reason) = read_only_state(
+            metadata.permissions().readonly(),
+            metadata.len(),
+            EDITABLE_FILE_LIMIT_BYTES,
+        );
+        Ok(Self {
+            title,
+            text: decoded.text,
+            meta: DocumentMeta {
+                path: Some(path.to_path_buf()),
+                encoding: decoded.encoding,
+                line_ending,
+                file_size: bytes.len(),
+                read_only,
+                read_only_reason,
+            },
+        })
+    }
+}
+
 impl Document {
     pub fn untitled(index: usize) -> Self {
         Self {
@@ -102,34 +141,13 @@ impl Document {
     }
 
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        let path = path.as_ref();
-        let metadata = fs::metadata(path)?;
-        let bytes = fs::read(path)?;
-        let decoded = decode_bytes(&bytes);
-        let title = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Untitled")
-            .to_owned();
-        let line_ending = LineEnding::detect(&decoded.text);
-        let text = decoded.text;
-        let (read_only, read_only_reason) = read_only_state(
-            metadata.permissions().readonly(),
-            metadata.len(),
-            EDITABLE_FILE_LIMIT_BYTES,
-        );
+        let loaded = LoadedDocument::open(path)?;
+        let saved_text = loaded.text.clone();
         Ok(Self {
-            title,
-            saved_text: text.clone(),
-            text,
-            meta: DocumentMeta {
-                path: Some(path.to_path_buf()),
-                encoding: decoded.encoding,
-                line_ending,
-                file_size: bytes.len(),
-                read_only,
-                read_only_reason,
-            },
+            title: loaded.title,
+            saved_text,
+            text: loaded.text,
+            meta: loaded.meta,
             dirty: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -300,6 +318,27 @@ fn read_only_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loaded_document_reads_a_dto_ready_snapshot() {
+        let path = std::env::temp_dir().join(format!(
+            "otterdive-loaded-document-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "first\r\nsecond").unwrap();
+
+        let loaded = LoadedDocument::open(&path).unwrap();
+
+        assert_eq!(loaded.title, path.file_name().unwrap().to_string_lossy());
+        assert_eq!(loaded.text, "first\r\nsecond");
+        assert_eq!(loaded.meta.line_ending, LineEnding::Crlf);
+        assert_eq!(loaded.meta.file_size, 13);
+        fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn undo_back_to_saved_text_clears_dirty_flag() {
