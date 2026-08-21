@@ -135,6 +135,8 @@ import {
   type AnalysePanelController,
   type AnalysePanelSettings,
 } from "./analysePanel";
+import { mapWithConcurrency, type BatchResult } from "./openBatch";
+import { finishOpenPerformance, startOpenPerformance } from "./openPerformance";
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
@@ -248,9 +250,11 @@ interface OpenDocument extends DocumentDto {
   draftId?: string;
   skipSessionRestore?: boolean;
   origin: DocumentOrigin;
-  model: monaco.editor.ITextModel;
+  model: monaco.editor.ITextModel | null;
   dirty: boolean;
+  metadataDirty: boolean;
   savedText: string;
+  savedAlternativeVersionId: number;
   languageOverride?: string;
   viewState?: monaco.editor.ICodeEditorViewState;
   encodingStatus: "编码已识别" | "重新解释" | "转换待保存";
@@ -911,6 +915,7 @@ let editor: monaco.editor.IStandaloneCodeEditor;
 let sessionTimer = 0;
 let sessionWriteQueue: Promise<void> = Promise.resolve();
 const autoSaveTimers = new globalThis.Map<number, number>();
+const documentSizeTimers = new globalThis.Map<number, number>();
 let unsavedResolver: ((value: UnsavedChoice) => void) | null = null;
 let confirmResolver: ((value: boolean) => void) | null = null;
 let textInputResolver: ((value: string | null) => void) | null = null;
@@ -934,6 +939,8 @@ let analysePanel: AnalysePanelController | null = null;
 const analyseBookmarkLines = new globalThis.Map<number, number[]>();
 let tabMenuDocumentId = 0;
 let renderedTabsSignature = "";
+let renderedWorkspace: WorkspaceDto | null = null;
+let renderedCollapsedDirsSignature = "";
 let draggedTabDocumentId: number | null = null;
 let tabScrollFrame = 0;
 let tabScrollResizeObserver: ResizeObserver | null = null;
@@ -955,6 +962,8 @@ let editorBusyDepth = 0;
 let openRequestTask: Promise<void> = Promise.resolve();
 let fileDropTask: Promise<void> = Promise.resolve();
 let openRequestsReady = false;
+let appReady = false;
+let appReadyPromise: Promise<void> | null = null;
 let titlebarMaximizeToggleAt = 0;
 let rightSidebarResizeState: HorizontalResizeState | null = null;
 let bottomResultsResizeState: VerticalResizeState | null = null;
@@ -1291,7 +1300,7 @@ function bootstrap() {
   applyMarkdownContentWidth();
 
   editor = monaco.editor.create($("editor"), {
-    model: initial.model,
+    model: ensureDocumentModel(initial),
     theme: "otterdive-light",
     automaticLayout: true,
     fontFamily: resolveEditorFontStack(),
@@ -1352,8 +1361,8 @@ function bootstrap() {
       const doc = activeDocument();
       return {
         id: doc.id,
-        revision: doc.model.getVersionId(),
-        text: doc.model.getValue(),
+        revision: documentVersion(doc),
+        text: documentText(doc),
         title: doc.title,
         path: doc.path ?? null,
         fileSize: doc.fileSize,
@@ -1363,8 +1372,8 @@ function bootstrap() {
     },
     getDocuments: () => state.documents.map((doc) => ({
       id: doc.id,
-      revision: doc.model.getVersionId(),
-      text: doc.model.getValue(),
+      revision: documentVersion(doc),
+      text: documentText(doc),
       title: doc.title,
       path: doc.path ?? null,
       fileSize: doc.fileSize,
@@ -1373,7 +1382,7 @@ function bootstrap() {
     })),
     getDocumentRevisions: () => state.documents.map((doc) => ({
       id: doc.id,
-      revision: doc.model.getVersionId(),
+      revision: documentVersion(doc),
     })),
     getSelectedText: selectedSourceTextForAnalyse,
     getSourceLine: () => editor.getPosition()?.lineNumber ?? 1,
@@ -1453,13 +1462,23 @@ function bootstrap() {
 }
 
 function markAppReady() {
-  window.requestAnimationFrame(() => {
+  if (appReadyPromise) return appReadyPromise;
+  appReady = true;
+  appReadyPromise = new Promise((resolve) => {
     window.requestAnimationFrame(() => {
-      requestEditorLayout();
-      document.body.classList.remove("booting");
-      $("bootSplash")?.remove();
+      window.requestAnimationFrame(() => {
+        requestEditorLayout();
+        document.body.classList.remove("booting");
+        $("bootSplash")?.remove();
+        resolve();
+      });
     });
   });
+  return appReadyPromise;
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
 }
 
 function bindTabScroller() {
@@ -1672,26 +1691,16 @@ function setAnalyseDropActive(active: boolean) {
 }
 
 async function openDroppedFiles(paths: string[]) {
-  const seen = new Set<string>();
-  const uniquePaths = paths.filter((path) => {
-    const key = normalizePathForCompare(path);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const result = await openPaths(paths, {
+    activate: "last",
+    origin: "standalone",
+    remember: true,
   });
-  let opened = 0;
-  let failed = 0;
-  for (const path of uniquePaths) {
-    try {
-      await openPath(path, true);
-      opened += 1;
-    } catch (error) {
-      failed += 1;
-      log(`拖放打开失败：${fileNameFromPath(path)}：${String(error)}`);
-    }
-  }
-  if (opened > 0) focusActiveEditor();
-  log(`拖放打开 ${opened} 个文件${failed > 0 ? `，${failed} 个失败` : ""}`);
+  result.failed.forEach(({ error, path }) => {
+    log(`拖放打开失败：${fileNameFromPath(path)}：${String(error)}`);
+  });
+  if (result.documents.length > 0) focusActiveEditor();
+  log(`拖放打开 ${result.documents.length} 个文件${result.failed.length > 0 ? `，${result.failed.length} 个失败` : ""}`);
 }
 
 function registerAppCommands() {
@@ -3686,6 +3695,7 @@ function setBusy(message: string) {
 function createDocument(
   dto: DocumentDto,
   options: {
+    deferModel?: boolean;
     draftId?: string;
     dirty?: boolean;
     savedText?: string;
@@ -3693,36 +3703,86 @@ function createDocument(
     languageOverride?: string;
   } = {},
 ): OpenDocument {
-  const uri = monaco.Uri.parse(`otterdive://model/${nextId}/${encodeURIComponent(dto.title)}`);
   const language = languageWithOverride(dto.language, options.languageOverride);
-  const model = monaco.editor.createModel(dto.text, language, uri);
-  const savedText = options.savedText ?? dto.text;
+  const savedText = options.savedText ?? (dto.path ? "" : dto.text);
   const doc: OpenDocument = {
     ...dto,
     id: nextId++,
     draftId: dto.path ? undefined : options.draftId ?? createDraftId(),
     origin: options.origin ?? "standalone",
-    model,
-    dirty: options.dirty ?? dto.text !== savedText,
+    model: null,
+    dirty: options.dirty ?? false,
+    metadataDirty: false,
     savedText,
+    savedAlternativeVersionId: 0,
     language,
     languageOverride: options.languageOverride,
     encodingStatus: "编码已识别",
   };
+  if (!options.deferModel) ensureDocumentModel(doc);
+  return doc;
+}
+
+function ensureDocumentModel(doc: OpenDocument) {
+  if (doc.model && !doc.model.isDisposed()) return doc.model;
+  const uri = monaco.Uri.parse(`otterdive://model/${doc.id}/${encodeURIComponent(doc.title)}`);
+  const model = monaco.editor.createModel(doc.text, doc.language, uri);
+  doc.model = model;
+  doc.text = "";
+  doc.savedAlternativeVersionId = doc.dirty ? 0 : model.getAlternativeVersionId();
   model.onDidChangeContent(() => {
-    doc.dirty = model.getValue() !== doc.savedText;
-    doc.text = model.getValue();
-    doc.fileSize = new Blob([doc.text]).size;
+    const wasDirty = doc.dirty;
+    doc.dirty = doc.metadataDirty || model.getAlternativeVersionId() !== doc.savedAlternativeVersionId;
     state.searchRevision += 1;
-    renderChrome();
-    renderMarkdownOutline();
-    scheduleMarkdownPreviewRender();
-    if (doc.id === state.activeId) scheduleMarkdownEditorSync(doc);
+    scheduleDocumentSizeUpdate(doc);
+    if (doc.id === state.activeId) {
+      if (wasDirty !== doc.dirty) renderChrome();
+      else renderDocumentStatus(doc);
+      if (isOutlineVisible()) renderMarkdownOutline();
+      scheduleMarkdownPreviewRender();
+      scheduleMarkdownEditorSync(doc);
+    }
     analysePanel?.notifyDocumentChanged(doc.id);
     scheduleAutoSave(doc);
     scheduleSessionSave();
   });
-  return doc;
+  return model;
+}
+
+function documentText(doc: OpenDocument) {
+  return doc.model?.getValue() ?? doc.text;
+}
+
+function documentVersion(doc: OpenDocument) {
+  return doc.model?.getVersionId() ?? 1;
+}
+
+function documentLineCount(doc: OpenDocument) {
+  if (doc.model) return doc.model.getLineCount();
+  if (doc.text.length === 0) return 1;
+  return doc.text.split(/\r\n|\r|\n/).length;
+}
+
+function documentValueLength(doc: OpenDocument) {
+  return doc.model?.getValueLength() ?? doc.text.length;
+}
+
+function scheduleDocumentSizeUpdate(doc: OpenDocument) {
+  const previous = documentSizeTimers.get(doc.id);
+  if (previous !== undefined) window.clearTimeout(previous);
+  const timer = window.setTimeout(() => {
+    documentSizeTimers.delete(doc.id);
+    doc.fileSize = new Blob([documentText(doc)]).size;
+    if (doc.id === state.activeId) renderDocumentStatus(doc);
+  }, 400);
+  documentSizeTimers.set(doc.id, timer);
+}
+
+function cancelDocumentSizeUpdate(documentId: number) {
+  const timer = documentSizeTimers.get(documentId);
+  if (timer === undefined) return;
+  window.clearTimeout(timer);
+  documentSizeTimers.delete(documentId);
 }
 
 function activeDocument() {
@@ -3751,10 +3811,11 @@ function activateDocument(id: number) {
   const previous = activeDocument();
   if (previous && previous.id !== id) syncActiveBookmarkLines(previous);
   if (previous && previous.id !== id) syncMarkdownModelFromEditor(previous);
-  if (previous && previous.id !== id && editor.getModel() === previous.model) {
+  if (previous && previous.id !== id && previous.model && editor.getModel() === previous.model) {
     previous.viewState = editor.saveViewState() ?? undefined;
   }
   state.activeId = id;
+  ensureDocumentModel(doc);
   if (!isMarkdownLikeDocument(doc) || state.markdownEditMode !== "wysiwyg") attachEditorModel(doc);
   renderAll();
   scheduleSessionSave();
@@ -3834,22 +3895,137 @@ async function openPath(path: string, remember = false) {
   if (remember) rememberRecentPath(path);
 }
 
-function addOrReplaceDocument(dto: DocumentDto, origin: DocumentOrigin) {
+function addOrReplaceDocument(
+  dto: DocumentDto,
+  origin: DocumentOrigin,
+  options: { activate?: boolean; deferModel?: boolean } = {},
+) {
+  const shouldActivate = options.activate !== false;
   const existing = state.documents.find((doc) => doc.path && doc.path === dto.path);
   if (existing) {
     if (!existing.dirty) {
-      existing.model.setValue(dto.text);
-      Object.assign(existing, dto, { dirty: false, savedText: dto.text, encodingStatus: "编码已识别" });
-      applyDetectedDocumentLanguage(existing, dto.language);
+      applyDocumentDto(existing, dto, "编码已识别");
     }
     if (origin === "standalone") existing.origin = "standalone";
-    activateDocument(existing.id);
-    return;
+    if (shouldActivate) activateDocument(existing.id);
+    return existing;
   }
-  const doc = createDocument(dto, { origin });
+  const doc = createDocument(dto, { deferModel: options.deferModel, origin });
   state.documents.push(doc);
-  activateDocument(doc.id);
+  if (shouldActivate) activateDocument(doc.id);
   log(`打开 ${doc.title}`);
+  return doc;
+}
+
+function applyDocumentDto(
+  doc: OpenDocument,
+  dto: DocumentDto,
+  encodingStatus: OpenDocument["encodingStatus"],
+) {
+  if (doc.model) doc.model.setValue(dto.text);
+  cancelAutoSave(doc.id);
+  cancelDocumentSizeUpdate(doc.id);
+  Object.assign(doc, dto, {
+    dirty: false,
+    metadataDirty: false,
+    savedText: dto.path ? "" : dto.text,
+    encodingStatus,
+  });
+  if (doc.model) {
+    doc.text = "";
+    doc.savedAlternativeVersionId = doc.model.getAlternativeVersionId();
+  }
+  applyDetectedDocumentLanguage(doc, dto.language);
+}
+
+interface OpenPathsOptions {
+  activate?: "first" | "last" | false;
+  concurrency?: number;
+  origin: DocumentOrigin | ((path: string) => DocumentOrigin);
+  remember?: boolean;
+}
+
+interface OpenPathsResult {
+  documents: OpenDocument[];
+  failed: Array<{ error: unknown; path: string }>;
+}
+
+async function openPaths(paths: string[], options: OpenPathsOptions): Promise<OpenPathsResult> {
+  const requestedPaths = uniquePathsForOpen(paths);
+  if (requestedPaths.length === 0) return { documents: [], failed: [] };
+  const performanceMark = startOpenPerformance(requestedPaths.length);
+  const pathsToLoad = requestedPaths.filter((path) => !state.documents.some((doc) =>
+    doc.path && normalizePathForCompare(doc.path) === normalizePathForCompare(path)
+  ));
+  const loadedResults = pathsToLoad.length > 0
+    ? await withBusy(
+      `正在打开 ${requestedPaths.length} 个文件`,
+      () => loadPathDtos(pathsToLoad, options.concurrency),
+    )
+    : [];
+  const loadedByPath = new globalThis.Map<string, BatchResult<DocumentDto>>(
+    pathsToLoad.map((path, index) => [normalizePathForCompare(path), loadedResults[index]]),
+  );
+  const documents: OpenDocument[] = [];
+  const failed: Array<{ error: unknown; path: string }> = [];
+  requestedPaths.forEach((path) => {
+    const existing = state.documents.find((doc) => doc.path
+      && normalizePathForCompare(doc.path) === normalizePathForCompare(path));
+    if (existing) {
+      const origin = typeof options.origin === "function" ? options.origin(path) : options.origin;
+      if (origin === "standalone") existing.origin = "standalone";
+      documents.push(existing);
+      return;
+    }
+    const result = loadedByPath.get(normalizePathForCompare(path));
+    if (result?.value) {
+      const origin = typeof options.origin === "function" ? options.origin(path) : options.origin;
+      documents.push(addOrReplaceDocument(result.value, origin, { activate: false, deferModel: true }));
+    } else {
+      failed.push({ error: result?.error ?? new Error("打开任务没有返回结果"), path });
+    }
+  });
+
+  if (options.remember) rememberRecentPaths(documents.flatMap((doc) => doc.path ? [doc.path] : []));
+  const target = options.activate === "first"
+    ? documents[0]
+    : options.activate === false
+      ? null
+      : documents.at(-1);
+  if (target) activateDocument(target.id);
+  else {
+    renderAll();
+    scheduleSessionSave();
+  }
+  await waitForNextPaint();
+  const metrics = finishOpenPerformance(performanceMark, documents.length, failed.length);
+  const heap = metrics.heapDeltaBytes === null
+    ? "不可用"
+    : `${metrics.heapDeltaBytes >= 0 ? "+" : "-"}${formatBytes(Math.abs(metrics.heapDeltaBytes))}`;
+  log(`批量打开性能：${metrics.opened}/${metrics.total}，${metrics.durationMs.toFixed(1)} ms，长任务 ${metrics.longTaskCount} 个/${metrics.longTaskDurationMs.toFixed(1)} ms，堆变化 ${heap}${metrics.failed ? `，失败 ${metrics.failed}` : ""}`);
+  return { documents, failed };
+}
+
+function loadPathDtos(paths: string[], concurrency = 4, priorityPath?: string) {
+  const priorityIndex = priorityPath
+    ? paths.findIndex((path) => normalizePathForCompare(path) === normalizePathForCompare(priorityPath))
+    : 0;
+  return mapWithConcurrency(
+    paths,
+    (path) => invoke<DocumentDto>("open_path", { path }),
+    { concurrency, priorityIndex },
+  );
+}
+
+function uniquePathsForOpen(paths: string[]) {
+  const seen = new Set<string>();
+  return paths.filter((path) => {
+    if (!path) return false;
+    const normalized = normalizePathForCompare(path);
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
 }
 
 async function saveActive() {
@@ -3875,7 +4051,9 @@ async function saveDocument(doc: OpenDocument, forceSaveAs: boolean) {
     log("已取消保存");
     return false;
   }
-  const textToSave = doc.model.getValue();
+  const model = ensureDocumentModel(doc);
+  const textToSave = model.getValue();
+  const savedAlternativeVersionId = model.getAlternativeVersionId();
   const saved = await withBusy(`保存 ${doc.title}`, () =>
     invoke<DocumentDto>("save_document", {
       request: {
@@ -3887,15 +4065,18 @@ async function saveDocument(doc: OpenDocument, forceSaveAs: boolean) {
     }),
     { lockEditor: false },
   );
-  const currentText = doc.model.getValue();
+  const currentText = model.getValue();
   Object.assign(doc, saved, {
-    dirty: currentText !== textToSave,
-    savedText: textToSave,
-    text: currentText,
+    dirty: model.getAlternativeVersionId() !== savedAlternativeVersionId,
+    metadataDirty: false,
+    savedText: "",
+    text: "",
     fileSize: new Blob([currentText]).size,
     encodingStatus: "编码已识别",
   });
+  doc.savedAlternativeVersionId = savedAlternativeVersionId;
   doc.draftId = undefined;
+  cancelDocumentSizeUpdate(doc.id);
   applyDetectedDocumentLanguage(doc, saved.language);
   renderAll();
   scheduleSessionSave();
@@ -4023,7 +4204,10 @@ async function closeWorkspace() {
   workspaceDocuments.forEach((doc) => cancelAutoSave(doc.id));
   workspaceDocuments.forEach((doc) => disposeMarkdownEditor(doc.id));
   state.documents = state.documents.filter((doc) => !workspaceDocumentIds.has(doc.id));
-  workspaceDocuments.forEach((doc) => doc.model.dispose());
+  workspaceDocuments.forEach((doc) => {
+    cancelDocumentSizeUpdate(doc.id);
+    doc.model?.dispose();
+  });
   if (state.documents.length === 0) state.documents.push(createUntitledDocument());
   if (!state.documents.some((doc) => doc.id === state.activeId)) {
     state.activeId = state.documents[0].id;
@@ -4069,7 +4253,8 @@ async function closeDocument(id: number): Promise<boolean> {
   cancelAutoSave(doc.id);
   disposeMarkdownEditor(doc.id);
   state.documents.splice(index, 1);
-  doc.model.dispose();
+  cancelDocumentSizeUpdate(doc.id);
+  doc.model?.dispose();
   if (state.documents.length === 0) state.documents.push(createUntitledDocument());
   activateDocument(state.documents[Math.max(0, index - 1)].id);
   if (state.searchScope === "open" && state.searchQuery) {
@@ -4084,7 +4269,7 @@ function rememberClosedDocument(doc: OpenDocument) {
   closedDocuments.unshift({
     title: doc.title,
     path: doc.path,
-    text: doc.model.getValue(),
+    text: documentText(doc),
     encoding: doc.encoding,
     lineEnding: doc.lineEnding,
     fileSize: doc.fileSize,
@@ -4763,8 +4948,9 @@ function removeOpenDocumentsForDeletedPath(path: string, isDir: boolean) {
     const remove = doc.path && pathMatchesTarget(doc.path, path, isDir);
     if (remove) {
       cancelAutoSave(doc.id);
+      cancelDocumentSizeUpdate(doc.id);
       disposeMarkdownEditor(doc.id);
-      doc.model.dispose();
+      doc.model?.dispose();
     }
     return !remove;
   });
@@ -4787,7 +4973,7 @@ function removeOpenDocumentsForDeletedPath(path: string, isDir: boolean) {
   } else if (removedActive || !state.documents.some((doc) => doc.id === state.activeId)) {
     state.activeId = state.documents[0].id;
   }
-  editor.setModel(activeDocument().model);
+  editor.setModel(ensureDocumentModel(activeDocument()));
 }
 
 function updateCollapsedDirsForRename(oldPath: string, newPath: string) {
@@ -4806,7 +4992,7 @@ function setLanguage(language: string) {
   const doc = activeDocument();
   doc.languageOverride = language;
   doc.language = language;
-  monaco.editor.setModelLanguage(doc.model, language);
+  if (doc.model) monaco.editor.setModelLanguage(doc.model, language);
   closeMenus();
   renderAll();
   scheduleSessionSave();
@@ -4831,9 +5017,7 @@ async function useEncoding(encoding: EncodingLabel) {
         request: { path: doc.path, encoding },
       }),
     );
-    doc.model.setValue(reopened.text);
-    Object.assign(doc, reopened, { dirty: false, savedText: reopened.text, encodingStatus: "重新解释" });
-    applyDetectedDocumentLanguage(doc, reopened.language);
+    applyDocumentDto(doc, reopened, "重新解释");
   } else {
     doc.encoding = encoding;
     doc.encodingStatus = "重新解释";
@@ -4848,6 +5032,7 @@ function convertEncoding(encoding: EncodingLabel) {
   const doc = activeDocument();
   doc.encoding = encoding;
   doc.encodingStatus = "转换待保存";
+  doc.metadataDirty = true;
   doc.dirty = true;
   closeMenus();
   renderAll();
@@ -5011,7 +5196,7 @@ function currentSearchSignature(scope = state.searchScope ?? "current") {
     bits.push(doc.path || doc.title);
   }
   if (scope === "open") {
-    bits.push(state.documents.map((doc) => `${doc.id}:${doc.path || doc.title}:${doc.model.getVersionId()}`).join("|"));
+    bits.push(state.documents.map((doc) => `${doc.id}:${doc.path || doc.title}:${documentVersion(doc)}`).join("|"));
   }
   if (scope === "workspace") {
     bits.push(
@@ -5301,7 +5486,7 @@ function currentReplaceContext() {
   }
   commitSearchHistory();
   commitReplaceHistory();
-  return { doc, model: doc.model, query, replacement };
+  return { doc, model: ensureDocumentModel(doc), query, replacement };
 }
 
 function currentReplaceMatchIndex(matches: TextMatchDto[]) {
@@ -5356,7 +5541,8 @@ function replaceOpenDocuments() {
       continue;
     }
     const mode = getSearchMode();
-    const matches = doc.model.findMatches(
+    const model = ensureDocumentModel(doc);
+    const matches = model.findMatches(
       editorSearchQuery(query),
       false,
       mode === "regex",
@@ -5367,12 +5553,11 @@ function replaceOpenDocuments() {
     const edits = matches
       .map((match) => ({
         range: match.range,
-        text: replacementForMatch(match.matches?.[0] ?? doc.model.getValueInRange(match.range), query, replacement),
+        text: replacementForMatch(match.matches?.[0] ?? model.getValueInRange(match.range), query, replacement),
       }))
       .reverse();
     if (edits.length > 0) {
-      doc.model.pushEditOperations([], edits, () => null);
-      doc.dirty = true;
+      model.pushEditOperations([], edits, () => null);
       total += edits.length;
     }
   }
@@ -5527,9 +5712,7 @@ async function refreshOpenDocumentsAfterReplace(applied: ReplacePreviewDto) {
       continue;
     }
     const reopened = await withBusy(`重新载入 ${doc.title}`, () => invoke<DocumentDto>("open_path", { path: doc.path }));
-    doc.model.setValue(reopened.text);
-    Object.assign(doc, reopened, { dirty: false, savedText: reopened.text, encodingStatus: "编码已识别" });
-    applyDetectedDocumentLanguage(doc, reopened.language);
+    applyDocumentDto(doc, reopened, "编码已识别");
   }
   renderAll();
 }
@@ -5555,7 +5738,8 @@ function searchReplaceRequest(root: string, query: string, replacement: string) 
 function modelMatches(doc: OpenDocument, allowSelection = true): TextMatchDto[] {
   const query = ($("findInput") as HTMLInputElement).value;
   const mode = getSearchMode();
-  const matches = doc.model.findMatches(
+  const model = ensureDocumentModel(doc);
+  const matches = model.findMatches(
     editorSearchQuery(query),
     false,
     mode === "regex",
@@ -5564,14 +5748,14 @@ function modelMatches(doc: OpenDocument, allowSelection = true): TextMatchDto[] 
     true,
   ).filter((match) => matchAllowed(doc, match, allowSelection));
   return matches.map((match) => {
-    const line = doc.model.getLineContent(match.range.startLineNumber);
+    const line = model.getLineContent(match.range.startLineNumber);
     return {
-      start: doc.model.getOffsetAt({ lineNumber: match.range.startLineNumber, column: match.range.startColumn }),
-      end: doc.model.getOffsetAt({ lineNumber: match.range.endLineNumber, column: match.range.endColumn }),
+      start: model.getOffsetAt({ lineNumber: match.range.startLineNumber, column: match.range.startColumn }),
+      end: model.getOffsetAt({ lineNumber: match.range.endLineNumber, column: match.range.endColumn }),
       line: match.range.startLineNumber,
       column: match.range.startColumn,
       lineText: line,
-      matchedText: doc.model.getValueInRange(match.range),
+      matchedText: model.getValueInRange(match.range),
     };
   });
 }
@@ -5582,7 +5766,7 @@ function matchAllowed(doc: OpenDocument, match: monaco.editor.FindMatch, allowSe
     if (!selectedRange || !rangeContainsRange(selectedRange, match.range)) return false;
   }
   if (!($("wholeWordInput") as HTMLInputElement).checked) return true;
-  const model = doc.model;
+  const model = ensureDocumentModel(doc);
   const line = model.getLineContent(match.range.startLineNumber);
   const start = match.range.startColumn - 1;
   const end = match.range.endColumn - 1;
@@ -5893,7 +6077,6 @@ function renderAll() {
   renderMarkdownSurface();
   renderSearchDecorations();
   renderHistoryLists();
-  renderRecentFiles();
   renderRightSidebar();
   renderBookmarkDecorations();
   renderAnalyseBookmarkDecorations();
@@ -6178,6 +6361,11 @@ function renderChrome() {
 
   renderTabs();
 
+  renderDocumentStatus(doc);
+  renderShortcutHints();
+}
+
+function renderDocumentStatus(doc = activeDocument()) {
   $("statusBusy").innerHTML = state.busyMessage
     ? `<span class="busy-pill">${iconSvg("LoaderCircle")}${escapeHtml(state.busyMessage)}</span>`
     : state.keybindingHint
@@ -6188,11 +6376,10 @@ function renderChrome() {
     .join(" · ");
   $("statusRight").innerHTML = [
     `第 ${editor.getPosition()?.lineNumber ?? 1} 行，第 ${editor.getPosition()?.column ?? 1} 列`,
-    `${doc.model.getLineCount()} 行`,
-    `${doc.model.getValueLength()} 字符`,
+    `${documentLineCount(doc)} 行`,
+    `${documentValueLength(doc)} 字符`,
     `${formatBytes(doc.fileSize)}`,
   ].map((item) => `<span>${item}</span>`).join(`<span class="dot"></span>`);
-  renderShortcutHints();
 }
 
 function commandElementIds(): Record<string, string> {
@@ -6298,6 +6485,8 @@ function renderWorkspace() {
   workspace.classList.toggle("panel-collapsed", inWorkspaceMode && !state.showDirectory);
   $("directoryToggle").classList.toggle("active", inWorkspaceMode && state.showDirectory);
   if (!state.workspace) {
+    renderedWorkspace = null;
+    renderedCollapsedDirsSignature = "";
     $("tree").innerHTML = `<div class="empty">还没有打开目录，带水獭去看看吧</div>`;
     return;
   }
@@ -6307,11 +6496,25 @@ function renderWorkspace() {
 
 function renderWorkspaceTree() {
   if (!state.workspace) {
+    renderedWorkspace = null;
+    renderedCollapsedDirsSignature = "";
     $("tree").innerHTML = `<div class="empty">还没有打开目录，带水獭去看看吧</div>`;
     return;
   }
+  const tree = $("tree");
+  const collapsedSignature = [...state.collapsedDirs].sort().join("\u0000");
+  if (renderedWorkspace !== state.workspace || renderedCollapsedDirsSignature !== collapsedSignature) {
+    tree.innerHTML = renderTreeRows(visibleTreeItems(state.workspace.items), null);
+    renderedWorkspace = state.workspace;
+    renderedCollapsedDirsSignature = collapsedSignature;
+  }
   const activePath = activeDocument().path;
-  $("tree").innerHTML = renderTreeRows(visibleTreeItems(state.workspace.items), activePath);
+  tree.querySelectorAll<HTMLElement>(".tree-item.active").forEach((item) => item.classList.remove("active"));
+  if (activePath) {
+    const activeRow = Array.from(tree.querySelectorAll<HTMLElement>(".tree-item.file"))
+      .find((item) => item.dataset.path === activePath);
+    activeRow?.classList.add("active");
+  }
 }
 
 function renderTreeRows(items: TreeItemDto[], activePath: string | null | undefined) {
@@ -6855,10 +7058,10 @@ function renderLineEndingList() {
 
 function setLineEnding(lineEnding: string) {
   const doc = activeDocument();
-  const text = normalizeLineEndings(doc.model.getValue(), lineEnding);
-  doc.model.setValue(text);
+  const model = ensureDocumentModel(doc);
+  const text = normalizeLineEndings(model.getValue(), lineEnding);
+  model.setValue(text);
   doc.lineEnding = lineEnding;
-  doc.dirty = doc.model.getValue() !== doc.savedText;
   closeMenus();
   renderAll();
   scheduleSessionSave();
@@ -7249,7 +7452,7 @@ function renderMarkdownOutline() {
     list.innerHTML = "";
     return;
   }
-  const locations = markdownHeadingLocations(activeDocument().model.getValue());
+  const locations = markdownHeadingLocations(documentText(activeDocument()));
   const muyaOutline = isMarkdownWysiwygActive() ? markdownEditor?.getOutline() : null;
   const headings = muyaOutline
     ? muyaOutline.map((heading, index) => ({
@@ -7366,7 +7569,7 @@ function renderMarkdownSurface() {
   disposeInactiveMarkdownEditors(wantsWysiwyg ? doc.id : 0);
   const cachedEntry = wantsWysiwyg ? markdownEditorCache.get(doc.id) : null;
   if (cachedEntry) activateMarkdownEditor(cachedEntry, doc);
-  else if (wantsWysiwyg && !state.restoring) void ensureMarkdownEditor(doc);
+  else if (wantsWysiwyg && (!state.restoring || appReady)) void ensureMarkdownEditor(doc);
 
   const showWysiwyg = wantsWysiwyg && markdownEditorDocumentId === doc.id && Boolean(markdownEditor);
   $("editor").style.zIndex = showWysiwyg ? "0" : "2";
@@ -7430,7 +7633,7 @@ async function createMarkdownEditor(doc: OpenDocument): Promise<MarkdownEditorCa
     let bridge: MarkdownEditorBridge | null = null;
     bridge = new MarkdownEditorBridge({
       element: pane,
-      markdown: doc.model.getValue(),
+      markdown: documentText(doc),
       darkMode: state.darkMode,
       fontSize: state.fontSize,
       fontFamily: resolveEditorFontStack(),
@@ -7514,21 +7717,22 @@ function loadMarkdownModule() {
 
 function handleMarkdownEditorChange(documentId: number, bridge: MarkdownEditorBridge, markdown: string) {
   const doc = state.documents.find((item) => item.id === documentId);
-  const modelMarkdown = doc ? markdownForDocumentModel(doc, markdown) : markdown;
+  if (!doc) return;
+  const model = ensureDocumentModel(doc);
+  const modelMarkdown = markdownForDocumentModel(doc, markdown);
   if (
-    !doc ||
     doc.id !== state.activeId ||
     state.markdownEditMode !== "wysiwyg" ||
     bridge !== markdownEditor ||
     doc.readOnly ||
-    modelMarkdown === doc.model.getValue()
+    modelMarkdown === model.getValue()
   ) {
-    if (doc && modelMarkdown === doc.model.getValue()) bridge.markSynchronized(markdown);
+    if (modelMarkdown === model.getValue()) bridge.markSynchronized(markdown);
     return;
   }
   markdownSyncingFromEditor = true;
   try {
-    replaceModelText(doc.model, modelMarkdown);
+    replaceModelText(model, modelMarkdown);
   } finally {
     markdownSyncingFromEditor = false;
   }
@@ -7567,7 +7771,7 @@ function replaceModelText(model: monaco.editor.ITextModel, nextText: string) {
 
 function markdownForDocumentModel(doc: OpenDocument, markdown: string) {
   const normalized = markdown.replace(/\r\n?/g, "\n");
-  return doc.model.getEOL() === "\r\n" ? normalized.replace(/\n/g, "\r\n") : normalized;
+  return ensureDocumentModel(doc).getEOL() === "\r\n" ? normalized.replace(/\n/g, "\r\n") : normalized;
 }
 
 function syncMarkdownModelFromEditor(doc = activeDocument()) {
@@ -7583,13 +7787,14 @@ function syncMarkdownModelFromEditor(doc = activeDocument()) {
   if (!markdownEditor.hasUnsynchronizedChanges()) return;
   const editorMarkdown = markdownEditor.getMarkdown();
   const markdown = markdownForDocumentModel(doc, editorMarkdown);
-  if (markdown === doc.model.getValue()) {
+  const model = ensureDocumentModel(doc);
+  if (markdown === model.getValue()) {
     markdownEditor.markSynchronized(editorMarkdown);
     return;
   }
   markdownSyncingFromEditor = true;
   try {
-    replaceModelText(doc.model, markdown);
+    replaceModelText(model, markdown);
   } finally {
     markdownSyncingFromEditor = false;
   }
@@ -7600,7 +7805,7 @@ function syncMarkdownEditorFromModel(doc = activeDocument(), focus = false) {
   if (!markdownEditor || !isMarkdownLikeDocument(doc)) return;
   const preserveHistory = markdownEditorDocumentId === doc.id;
   markdownEditorDocumentId = doc.id;
-  markdownEditor.setMarkdown(doc.model.getValue(), focus, preserveHistory);
+  markdownEditor.setMarkdown(documentText(doc), focus, preserveHistory);
   markdownEditor.setReadOnly(editorBusyDepth > 0 || doc.readOnly);
 }
 
@@ -7729,7 +7934,7 @@ async function renderMarkdownPreview() {
     return;
   }
   applyMarkdownPreviewWidth();
-  const source = doc.model.getValue();
+  const source = documentText(doc);
   if (!source.trim()) {
     preview.innerHTML = markdownPreviewShell(doc, source, `<div class="markdown-preview-empty">空白 Markdown</div>`);
     requestEditorLayout();
@@ -7790,7 +7995,7 @@ function isCurrentMarkdownPreview(renderVersion: number, doc: OpenDocument, sour
   return (
     renderVersion === markdownPreviewRenderVersion &&
     active.id === doc.id &&
-    active.model.getValue() === source &&
+    documentText(active) === source &&
     isMarkdownPreviewEnabled(active)
   );
 }
@@ -7856,12 +8061,8 @@ function runEditorLayout() {
 function restoreEditorSurface() {
   const doc = activeDocument();
   if (!doc || !editor) return;
-  const model = doc.model;
+  const model = ensureDocumentModel(doc);
   if (editor.getModel() !== model) {
-    editor.setModel(model);
-  } else {
-    // Re-bind the same model to force Monaco to remeasure after a 0-height first layout.
-    editor.setModel(null);
     editor.setModel(model);
   }
   applyEditorPerformanceProfile(doc);
@@ -7870,18 +8071,11 @@ function restoreEditorSurface() {
 }
 
 function attachEditorModel(doc: OpenDocument) {
-  // Setting a different model on an already-created editor can leave the view
-  // blank (no gutter, no text) until a later resize forces a fresh layout
-  // (e.g. opening Find with Ctrl+F). The follow-up requestEditorLayout runs in
-  // a rAF that can race Monaco's internal model-swap view setup, so the layout
-  // lands on a not-yet-ready view. Rebonding the model recreates the view
-  // synchronously within the same tick, guaranteeing the new model paints.
-  const changed = editor.getModel() !== doc.model;
-  editor.setModel(doc.model);
-  if (changed) {
-    editor.setModel(null);
-    editor.setModel(doc.model);
-  }
+  // Keep model attachment to one swap. A forced render in requestEditorLayout
+  // handles the first-layout race without detaching and rebuilding the view.
+  const model = ensureDocumentModel(doc);
+  const changed = editor.getModel() !== model;
+  if (changed) editor.setModel(model);
   applyEditorPerformanceProfile(doc);
   if (doc.viewState) editor.restoreViewState(doc.viewState);
   renderBookmarkDecorations();
@@ -7922,7 +8116,7 @@ function navigateBookmark(delta: number) {
 function renderBookmarkDecorations() {
   if (!bookmarkDecorations || !editor?.getModel()) return;
   const doc = activeDocument();
-  const lineCount = doc.model.getLineCount();
+  const lineCount = documentLineCount(doc);
   const lines = (state.bookmarks[documentSessionKey(doc)] ?? []).filter((line) => line >= 1 && line <= lineCount);
   bookmarkDecorations.set(lines.map((line) => ({
     range: new monaco.Range(line, 1, line, 1),
@@ -7940,7 +8134,7 @@ function renderBookmarkDecorations() {
 function renderAnalyseBookmarkDecorations() {
   if (!analyseBookmarkDecorations || !editor?.getModel()) return;
   const doc = activeDocument();
-  const lineCount = doc.model.getLineCount();
+  const lineCount = documentLineCount(doc);
   const lines = (analyseBookmarkLines.get(doc.id) ?? [])
     .filter((line) => line >= 1 && line <= lineCount);
   analyseBookmarkDecorations.set(lines.map((line) => ({
@@ -8334,10 +8528,15 @@ function renderRightSidebar() {
   $("searchToolPane").classList.toggle("hidden", state.rightTool !== "search");
   $("outlineToolPane").classList.toggle("hidden", state.rightTool !== "outline");
   $("analyseToolPane").classList.toggle("hidden", state.rightTool !== "analyse");
-  analysePanel?.syncDocument();
-  renderSearchSidebarResults();
-  renderMarkdownOutline();
+  const sidebarOpen = !$("findPopover").classList.contains("hidden");
+  if (sidebarOpen && state.rightTool === "analyse") analysePanel?.syncDocument();
+  if (sidebarOpen && state.rightTool === "search") renderSearchSidebarResults();
+  if (sidebarOpen && state.rightTool === "outline") renderMarkdownOutline();
   renderRightSidebarToggle();
+}
+
+function isOutlineVisible() {
+  return !$("findPopover").classList.contains("hidden") && state.rightTool === "outline";
 }
 
 function hasCurrentSearchResults() {
@@ -8538,7 +8737,7 @@ function runEditorAction(actionId: string, successMessage?: string) {
 
 function isFormattingActionSupported(doc = activeDocument()) {
   if (!editor || isMarkdownWysiwygActive(doc)) return false;
-  const language = doc.model.getLanguageId() || doc.language || "plaintext";
+  const language = ensureDocumentModel(doc).getLanguageId() || doc.language || "plaintext";
   if (language === "sql" || supportsDprintLanguage(language)) return true;
   return editor.getAction("editor.action.formatDocument")?.isSupported() ?? false;
 }
@@ -8546,7 +8745,8 @@ function isFormattingActionSupported(doc = activeDocument()) {
 async function formatActiveDocument() {
   const doc = activeDocument();
   if (doc.readOnly || isMarkdownWysiwygActive()) return;
-  const language = doc.model.getLanguageId() || doc.language || "plaintext";
+  const model = ensureDocumentModel(doc);
+  const language = model.getLanguageId() || doc.language || "plaintext";
   const label = languageLabel(language);
   const action = editor.getAction("editor.action.formatDocument");
   if (!isFormattingActionSupported(doc)) {
@@ -8561,28 +8761,28 @@ async function formatActiveDocument() {
     return;
   }
 
-  const before = doc.model.getValue();
+  const before = model.getValue();
   if (!before.trim()) {
     log(`${label} 已是规范格式`);
     return;
   }
 
   try {
-    const version = doc.model.getVersionId();
+    const version = model.getVersionId();
     if (language === "sql") {
-      const options = doc.model.getOptions();
+      const options = model.getOptions();
       const formatted = await withBusy(
         "正在格式化 SQL",
         () => formatSqlInWorker(before, options.tabSize, !options.insertSpaces),
         { lockEditor: false },
       );
-      if (doc.model.isDisposed() || doc.model.getVersionId() !== version || doc.model.getLanguageId() !== language) {
+      if (model.isDisposed() || model.getVersionId() !== version || model.getLanguageId() !== language) {
         log("文档内容或语言已变化，已取消格式化");
         return;
       }
-      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model, before));
+      replaceModelText(model, normalizeFormattedText(formatted, model, before));
     } else if (supportsDprintLanguage(language)) {
-      const options = doc.model.getOptions();
+      const options = model.getOptions();
       const formatted = await withBusy(
         `正在格式化 ${label}`,
         () => formatCodeInWorker(
@@ -8594,16 +8794,16 @@ async function formatActiveDocument() {
         ),
         { lockEditor: false },
       );
-      if (doc.model.isDisposed() || doc.model.getVersionId() !== version || doc.model.getLanguageId() !== language) {
+      if (model.isDisposed() || model.getVersionId() !== version || model.getLanguageId() !== language) {
         log("文档内容或语言已变化，已取消格式化");
         return;
       }
-      replaceModelText(doc.model, normalizeFormattedText(formatted, doc.model, before));
+      replaceModelText(model, normalizeFormattedText(formatted, model, before));
     } else {
       await action?.run();
     }
     editor.focus();
-    log(doc.model.getValue() === before ? `${label} 已是规范格式` : `${label} 已格式化`);
+    log(model.getValue() === before ? `${label} 已是规范格式` : `${label} 已格式化`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log(`${label} 格式化失败：${message}`);
@@ -9160,6 +9360,7 @@ function renderCommandSelection() {
 }
 
 async function restoreSession() {
+  const restorePerformanceMark = startOpenPerformance(0);
   let raw: string | null = null;
   let migratedLegacySession = false;
   try {
@@ -9271,88 +9472,121 @@ async function restoreSession() {
     monaco.editor.setTheme(state.darkMode ? "otterdive-dark" : "otterdive-light");
     setThemeButton();
 
-    if (snapshot.workspaceRoot) {
-      try {
-        const workspace = await invoke<WorkspaceDto>("read_workspace", { path: snapshot.workspaceRoot });
-        state.workspace = workspace;
-        state.showDirectory = state.mode === "workspace" ? snapshot.showDirectory ?? true : false;
-        if (!state.recentWorkspaces.includes(workspace.root)) {
-          state.recentWorkspaces.unshift(workspace.root);
-          state.recentWorkspaces = state.recentWorkspaces.slice(0, 20);
-        }
-        ($("directoryInput") as HTMLInputElement).value = workspace.root;
-      } catch (error) {
-        log(`恢复工作目录失败：${String(error)}`);
-        state.mode = "single";
-        state.showDirectory = false;
-      }
-    }
+    const rightSidebarOpen = Boolean(snapshot.rightSidebarOpen);
+    $("findPopover").classList.toggle("hidden", !rightSidebarOpen);
+    $("app").classList.toggle("right-sidebar-open", rightSidebarOpen);
 
-    const restoredFiles = uniquePaths(snapshot.openFiles ?? []);
-    let restoredCount = 0;
-    for (const path of restoredFiles) {
-      try {
-        const dto = await invoke<DocumentDto>("open_path", { path });
-        addOrReplaceDocument(dto, restoredDocumentOrigin(path, snapshot));
-        const restored = state.documents.find((doc) => doc.path === path);
-        if (restored) {
-          restored.viewState = snapshot.documentViews?.[documentSessionKey(restored)];
-          const languageOverride = snapshot.documentLanguageOverrides?.[documentSessionKey(restored)];
-          if (languageOverride) {
-            restored.languageOverride = languageOverride;
-            applyDetectedDocumentLanguage(restored, restored.language);
-          }
-        }
-        restoredCount += 1;
-      } catch (error) {
-        log(`恢复文件失败：${path}：${String(error)}`);
-      }
-    }
+    const restoredFiles = uniquePathsForOpen(snapshot.openFiles ?? []);
+    restorePerformanceMark.total = restoredFiles.length;
+    const primaryPath = snapshot.activeDraftId
+      ? undefined
+      : snapshot.activePath && restoredFiles.some((path) =>
+        normalizePathForCompare(path) === normalizePathForCompare(snapshot.activePath!))
+        ? snapshot.activePath
+        : restoredFiles[0];
     let restoredDraftCount = 0;
     for (const draft of snapshot.draftDocuments ?? []) {
-      const doc = createDraftDocument(draft);
+      const doc = createDraftDocument(draft, true);
       doc.origin = snapshot.documentOrigins?.[documentSessionKey(doc)] ?? "standalone";
       doc.viewState = snapshot.documentViews?.[documentSessionKey(doc)];
       state.documents.push(doc);
       restoredDraftCount += 1;
     }
 
-  const placeholder = state.documents.find((doc) => !doc.path && doc.title === "Untitled-1.txt" && !doc.dirty);
-    if (restoredCount + restoredDraftCount > 0 && placeholder && state.documents.length > 1) {
+    let restoredCount = 0;
+    const failedPaths = new Set<string>();
+    if (primaryPath) {
+      try {
+        const dto = await invoke<DocumentDto>("open_path", { path: primaryPath });
+        const restored = addOrReplaceDocument(dto, restoredDocumentOrigin(primaryPath, snapshot), {
+          activate: false,
+          deferModel: true,
+        });
+        applyRestoredDocumentMetadata(restored, snapshot);
+        restoredCount += 1;
+      } catch (error) {
+        failedPaths.add(normalizePathForCompare(primaryPath));
+        log(`恢复文件失败：${primaryPath}：${String(error)}`);
+      }
+    }
+
+    const placeholder = state.documents.find((doc) => !doc.path && doc.title === "Untitled-1.txt" && !doc.dirty);
+    const initialActive = snapshot.activePath
+      ? state.documents.find((doc) => doc.path
+        && normalizePathForCompare(doc.path) === normalizePathForCompare(snapshot.activePath!))
+      : snapshot.activeDraftId
+        ? state.documents.find((doc) => doc.draftId === snapshot.activeDraftId)
+        : state.documents.find((doc) => doc.path === primaryPath);
+    if (initialActive) state.activeId = initialActive.id;
+    if ((restoredCount + restoredDraftCount > 0) && placeholder && state.documents.length > 1) {
       state.documents = state.documents.filter((doc) => doc !== placeholder);
     }
+    if (!state.documents.some((doc) => doc.id === state.activeId)) state.activeId = state.documents[0].id;
+    const firstUsableDocument = activeDocument();
+    const firstUsableDocumentId = firstUsableDocument.id;
+    const firstUsableModel = ensureDocumentModel(firstUsableDocument);
+    editor.setModel(firstUsableModel);
+    applyEditorPerformanceProfile(firstUsableDocument);
+    if (firstUsableDocument.viewState) editor.restoreViewState(firstUsableDocument.viewState);
+    if (placeholder && !state.documents.includes(placeholder)) placeholder.model?.dispose();
+    renderAll();
+    await markAppReady();
+    renderMarkdownSurface();
+    log(`会话活动文件可用：${(performance.now() - restorePerformanceMark.startedAt).toFixed(1)} ms`);
+
+    const workspacePromise = restoreWorkspaceFromSnapshot(snapshot);
+    const remainingPaths = restoredFiles.filter((path) =>
+      (!primaryPath || normalizePathForCompare(path) !== normalizePathForCompare(primaryPath))
+      && !failedPaths.has(normalizePathForCompare(path))
+    );
+    const remainingResultsPromise = loadPathDtos(remainingPaths, 4);
+    const [remainingResults] = await Promise.all([remainingResultsPromise, workspacePromise]);
+    remainingResults.forEach((result, index) => {
+      const path = remainingPaths[index];
+      if (!result.value) {
+        log(`恢复文件失败：${path}：${String(result.error)}`);
+        return;
+      }
+      const restored = addOrReplaceDocument(result.value, restoredDocumentOrigin(path, snapshot), {
+        activate: false,
+        deferModel: true,
+      });
+      applyRestoredDocumentMetadata(restored, snapshot);
+      restoredCount += 1;
+    });
+
     restoreDocumentOrder(snapshot.documentOrder);
+    const userSelectedAnotherDocument = state.activeId !== firstUsableDocumentId;
     const active = snapshot.activePath
-      ? state.documents.find((doc) => doc.path === snapshot.activePath)
+      ? state.documents.find((doc) => doc.path
+        && normalizePathForCompare(doc.path) === normalizePathForCompare(snapshot.activePath!))
       : snapshot.activeDraftId
         ? state.documents.find((doc) => doc.draftId === snapshot.activeDraftId)
         : null;
-    if (active) state.activeId = active.id;
+    if (active && !userSelectedAnotherDocument) state.activeId = active.id;
     if (!state.documents.some((doc) => doc.id === state.activeId)) {
       state.activeId = state.documents[0].id;
     }
-    // Switch model first so the disposed placeholder is never left attached to the editor.
     const restoredActive = activeDocument();
-    editor.setModel(restoredActive.model);
+    editor.setModel(ensureDocumentModel(restoredActive));
     applyEditorPerformanceProfile(restoredActive);
-    if (restoredActive.viewState) editor.restoreViewState(restoredActive.viewState);
-    if (placeholder && !state.documents.includes(placeholder)) {
-      placeholder.model.dispose();
-    }
-
-    const rightSidebarAvailable = true;
-    const rightSidebarOpen = Boolean(snapshot.rightSidebarOpen) && rightSidebarAvailable;
-    $("findPopover").classList.toggle("hidden", !rightSidebarOpen);
-    $("app").classList.toggle("right-sidebar-open", rightSidebarOpen);
+    if (!userSelectedAnotherDocument && restoredActive.viewState) editor.restoreViewState(restoredActive.viewState);
     renderAll();
+    await waitForNextPaint();
     window.requestAnimationFrame(() => {
       $("tree").scrollTop = Math.max(0, snapshot.treeScrollTop ?? 0);
     });
-    log(`会话已恢复：${restoredCount} 个文件，${restoredDraftCount} 个临时文件`);
+    const restoreMetrics = finishOpenPerformance(
+      restorePerformanceMark,
+      restoredCount,
+      Math.max(0, restoredFiles.length - restoredCount),
+    );
+    log(`会话已恢复：${restoredCount} 个文件，${restoredDraftCount} 个临时文件；总耗时 ${restoreMetrics.durationMs.toFixed(1)} ms，长任务 ${restoreMetrics.longTaskCount} 个/${restoreMetrics.longTaskDurationMs.toFixed(1)} ms`);
   } catch (error) {
     log(`会话恢复失败：${String(error)}`);
   } finally {
     state.restoring = false;
+    state.documents.forEach(scheduleAutoSave);
     renderMarkdownSurface();
     // Force a layout after shell chrome settles; Monaco can paint blank if height was 0 at create.
     window.requestAnimationFrame(() => {
@@ -9399,11 +9633,12 @@ async function applyOpenRequest(args: StartupArgsDto) {
   if (args.directories[0]) {
     await openWorkspacePath(args.directories[0]);
   }
-  for (const path of args.files) {
-    await openPath(path, args.directories.length === 0);
-  }
-  renderAll();
-  scheduleSessionSave();
+  const result = await openPaths(args.files, {
+    activate: "last",
+    origin: args.directories.length === 0 ? "standalone" : "workspace",
+    remember: args.directories.length === 0,
+  });
+  result.failed.forEach(({ error, path }) => log(`打开失败：${path}：${String(error)}`));
 }
 
 function applySearchSnapshot(snapshot: Partial<SessionSnapshot>) {
@@ -9423,7 +9658,7 @@ function applySearchSnapshot(snapshot: Partial<SessionSnapshot>) {
   ($("skipDirsInput") as HTMLInputElement).value = snapshot.skipDirs || DEFAULT_SKIP_DIRS;
 }
 
-function createDraftDocument(snapshot: Partial<DraftDocumentSnapshot>) {
+function createDraftDocument(snapshot: Partial<DraftDocumentSnapshot>, deferModel = false) {
   const text = snapshot.text ?? "";
   const encoding = encodings.includes(snapshot.encoding as EncodingLabel) ? snapshot.encoding as EncodingLabel : "UTF-8";
   return createDocument(
@@ -9440,6 +9675,7 @@ function createDraftDocument(snapshot: Partial<DraftDocumentSnapshot>) {
       largeFile: false,
     },
     {
+      deferModel,
       draftId: snapshot.id || createDraftId(),
       dirty: snapshot.dirty ?? text !== (snapshot.savedText ?? ""),
       savedText: snapshot.savedText ?? "",
@@ -9486,13 +9722,43 @@ function restoredDocumentOrigin(path: string, snapshot: Partial<SessionSnapshot>
   return "standalone";
 }
 
+function applyRestoredDocumentMetadata(doc: OpenDocument, snapshot: Partial<SessionSnapshot>) {
+  doc.viewState = snapshot.documentViews?.[documentSessionKey(doc)];
+  const languageOverride = snapshot.documentLanguageOverrides?.[documentSessionKey(doc)];
+  if (!languageOverride) return;
+  doc.languageOverride = languageOverride;
+  applyDetectedDocumentLanguage(doc, doc.language);
+}
+
+async function restoreWorkspaceFromSnapshot(snapshot: Partial<SessionSnapshot>) {
+  if (!snapshot.workspaceRoot) return;
+  const workspaceBeforeRestore = state.workspace;
+  const modeBeforeRestore = state.mode;
+  try {
+    const workspace = await invoke<WorkspaceDto>("read_workspace", { path: snapshot.workspaceRoot });
+    if (state.workspace !== workspaceBeforeRestore || state.mode !== modeBeforeRestore) return;
+    state.workspace = workspace;
+    state.showDirectory = state.mode === "workspace" ? snapshot.showDirectory ?? true : false;
+    if (!state.recentWorkspaces.includes(workspace.root)) {
+      state.recentWorkspaces.unshift(workspace.root);
+      state.recentWorkspaces = state.recentWorkspaces.slice(0, 20);
+    }
+    ($("directoryInput") as HTMLInputElement).value = workspace.root;
+  } catch (error) {
+    log(`恢复工作目录失败：${String(error)}`);
+    if (state.workspace !== workspaceBeforeRestore || state.mode !== modeBeforeRestore) return;
+    state.mode = "single";
+    state.showDirectory = false;
+  }
+}
+
 function draftDocumentSnapshots() {
   return state.documents
     .filter((doc) => !doc.path && !doc.skipSessionRestore)
     .map((doc): DraftDocumentSnapshot => ({
       id: ensureDraftId(doc),
       title: doc.title,
-      text: doc.model.getValue(),
+      text: documentText(doc),
       encoding: doc.encoding,
       lineEnding: doc.lineEnding || "LF",
       language: doc.language || "plaintext",
@@ -9507,7 +9773,15 @@ function scheduleSessionSave() {
   window.clearTimeout(sessionTimer);
   sessionTimer = window.setTimeout(() => {
     void saveSession().catch((error) => log(`保存会话失败：${String(error)}`));
-  }, 250);
+  }, sessionSaveDelayMs());
+}
+
+function sessionSaveDelayMs() {
+  const largestDirtyDraft = state.documents.reduce((largest, doc) =>
+    !doc.path && doc.dirty ? Math.max(largest, documentValueLength(doc)) : largest, 0);
+  if (largestDirtyDraft >= 2 * 1024 * 1024) return 1_500;
+  if (largestDirtyDraft >= 256 * 1024) return 800;
+  return 400;
 }
 
 async function saveSession() {
@@ -9597,6 +9871,18 @@ async function saveSession() {
 
 function rememberRecentPath(path: string) {
   state.recentFiles = [path, ...state.recentFiles.filter((item) => item !== path)].slice(0, 40);
+  renderRecentFiles();
+  scheduleSessionSave();
+}
+
+function rememberRecentPaths(paths: string[]) {
+  if (paths.length === 0) return;
+  const requested = uniquePathsForOpen(paths);
+  const requestedKeys = new Set(requested.map(normalizePathForCompare));
+  state.recentFiles = [
+    ...requested.slice().reverse(),
+    ...state.recentFiles.filter((path) => !requestedKeys.has(normalizePathForCompare(path))),
+  ].slice(0, 40);
   renderRecentFiles();
   scheduleSessionSave();
 }
@@ -10049,7 +10335,7 @@ function languageFromFilePath(path: string) {
 function applyDetectedDocumentLanguage(doc: OpenDocument, detectedLanguage: string | null | undefined) {
   const language = languageWithOverride(detectedLanguage, doc.languageOverride);
   doc.language = language;
-  monaco.editor.setModelLanguage(doc.model, language);
+  if (doc.model) monaco.editor.setModelLanguage(doc.model, language);
 }
 
 function markdownMatchesToDto(matches: MarkdownSearchMatch[]): TextMatchDto[] {

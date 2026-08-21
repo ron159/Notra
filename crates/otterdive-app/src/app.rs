@@ -1,6 +1,6 @@
 use otterdive_core::{
-    DirectorySearchReport, Document, EncodingKind, FileReplacePreview, LineEnding, ReplaceOutcome,
-    SearchMode, SearchOptions, TextMatch, apply_directory_replace,
+    DirectorySearchReport, Document, EncodingKind, FileReplacePreview, LineEnding, LoadedDocument,
+    ReplaceOutcome, SearchMode, SearchOptions, TextMatch, apply_directory_replace,
     document::EDITABLE_FILE_LIMIT_BYTES, preview_directory_replace, search_directory,
 };
 use serde::{Deserialize, Serialize};
@@ -627,9 +627,9 @@ fn pick_file_path(request: DialogPathRequest) -> Result<Option<String>, String> 
 async fn open_path(path: String) -> Result<DocumentDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = PathBuf::from(path);
-        let doc =
-            Document::open(&path).map_err(|err| format!("打开失败：{}：{err}", path.display()))?;
-        Ok(document_to_dto(doc))
+        let doc = LoadedDocument::open(&path)
+            .map_err(|err| format!("打开失败：{}：{err}", path.display()))?;
+        Ok(loaded_document_to_dto(doc))
     })
     .await
     .map_err(|err| format!("打开任务失败：{err}"))?
@@ -992,6 +992,22 @@ where
 }
 
 fn document_to_dto(doc: Document) -> DocumentDto {
+    let path = doc.meta.path.as_deref();
+    DocumentDto {
+        title: doc.title,
+        path: path.map(|path| path.display().to_string()),
+        language: language_from_path(path),
+        large_file: doc.meta.read_only && doc.meta.file_size > EDITABLE_FILE_LIMIT_BYTES as usize,
+        text: doc.text,
+        encoding: encoding_label(doc.meta.encoding).to_owned(),
+        line_ending: line_ending_label(doc.meta.line_ending).to_owned(),
+        file_size: doc.meta.file_size,
+        read_only: doc.meta.read_only,
+        read_only_reason: doc.meta.read_only_reason,
+    }
+}
+
+fn loaded_document_to_dto(doc: LoadedDocument) -> DocumentDto {
     let path = doc.meta.path.as_deref();
     DocumentDto {
         title: doc.title,
